@@ -1,0 +1,65 @@
+/**
+ * Manual sync trigger. POST with JSON body:
+ *   { source: 'financial', from?: 'YYYY-MM-DD', to?: 'YYYY-MM-DD' }
+ *
+ * Gated by CRON_SECRET — pass either as Bearer token or ?secret=… query.
+ * Default window is the trailing 7 days (matches the cron path).
+ */
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { syncFinancial } from '@/lib/sync/servicetitan/financial';
+import { trailingDays } from '@/lib/sync/window';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
+
+const SOURCES = ['financial'] as const;
+type Source = (typeof SOURCES)[number];
+
+function authorized(req: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return true; // dev / not yet set
+  const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+  const query = req.nextUrl.searchParams.get('secret');
+  return bearer === secret || query === secret;
+}
+
+export async function POST(req: NextRequest) {
+  if (!authorized(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
+  let body: { source?: string; from?: string; to?: string } = {};
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    // empty body is fine — take defaults
+  }
+
+  const source = (body.source ?? req.nextUrl.searchParams.get('source') ?? 'financial') as Source;
+  if (!SOURCES.includes(source)) {
+    return NextResponse.json(
+      { error: `unknown source: ${source}. supported: ${SOURCES.join(', ')}` },
+      { status: 400 },
+    );
+  }
+
+  const from = body.from ?? req.nextUrl.searchParams.get('from') ?? undefined;
+  const to = body.to ?? req.nextUrl.searchParams.get('to') ?? undefined;
+  const window = from && to ? { from, to } : trailingDays(7);
+
+  try {
+    if (source === 'financial') {
+      const result = await syncFinancial(window, 'manual');
+      return NextResponse.json({ ok: true, source, window, ...result });
+    }
+    // Future sources land here.
+    return NextResponse.json({ error: 'source not yet implemented' }, { status: 501 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ ok: false, source, window, error: message }, { status: 500 });
+  }
+}
+
+// Support GET for quick browser-poking while debugging
+export const GET = POST;
