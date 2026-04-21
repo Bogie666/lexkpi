@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lex KPI · Refresh</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css?v=10">
+</head>
+<body>
+<div id="root" class="stage"></div>
+
+<div class="tweaks" id="tweaks">
+  <div class="tweaks-head">
+    <span>Tweaks</span>
+    <button id="tweaks-close" aria-label="close">×</button>
+  </div>
+  <div class="tweaks-body">
+    <div class="tweaks-group">
+      <div class="tweaks-label">Direction</div>
+      <div class="tweaks-options" data-key="direction">
+        <button data-v="A">A · Refined</button>
+        <button data-v="B">B · Editorial</button>
+        <button data-v="C">C · Command</button>
+      </div>
+      <div class="tweaks-hint">Only A has the full tabbed shell. B & C show Financial only.</div>
+    </div>
+    <div class="tweaks-group">
+      <div class="tweaks-label">Theme</div>
+      <div class="tweaks-options" data-key="theme">
+        <button data-v="dark">Dark</button>
+        <button data-v="light">Light</button>
+      </div>
+    </div>
+    <div class="tweaks-group">
+      <div class="tweaks-label">Density</div>
+      <div class="tweaks-options" data-key="density">
+        <button data-v="compact">Compact</button>
+        <button data-v="cozy">Cozy</button>
+        <button data-v="spacious">Spacious</button>
+      </div>
+    </div>
+    <div class="tweaks-group">
+      <div class="tweaks-label">Layout</div>
+      <div class="tweaks-options" data-key="layout">
+        <button data-v="cards">Cards</button>
+        <button data-v="table">Table</button>
+        <button data-v="split">Split</button>
+      </div>
+      <div class="tweaks-hint">Applies to Financial view.</div>
+    </div>
+    <div class="tweaks-group">
+      <div class="tweaks-label">Chart style</div>
+      <div class="tweaks-options" data-key="chart">
+        <button data-v="area">Area</button>
+        <button data-v="lines">Lines</button>
+        <button data-v="bars">Bars</button>
+      </div>
+    </div>
+    <div class="tweaks-group">
+      <div class="tweaks-label">Accent</div>
+      <div class="tweaks-swatches" data-key="accent">
+        <button data-v="oklch(0.72 0.14 235)" style="background:oklch(0.72 0.14 235)" title="Sky"></button>
+        <button data-v="oklch(0.74 0.16 150)" style="background:oklch(0.74 0.16 150)" title="Emerald"></button>
+        <button data-v="oklch(0.80 0.16 85)"  style="background:oklch(0.80 0.16 85)"  title="Amber"></button>
+        <button data-v="oklch(0.70 0.18 25)"  style="background:oklch(0.70 0.18 25)"  title="Red"></button>
+        <button data-v="oklch(0.68 0.18 295)" style="background:oklch(0.68 0.18 295)" title="Violet"></button>
+        <button data-v="oklch(0.88 0.20 120)" style="background:oklch(0.88 0.20 120)" title="Lime"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button id="tweaks-toggle" style="position:fixed;bottom:20px;right:20px;z-index:9998;background:#111;color:#fff;border:1px solid rgba(255,255,255,0.2);border-radius:999px;padding:10px 16px;font:500 12px 'Geist',sans-serif;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,0.3)">Tweaks</button>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js?v=2"></script>
+<script src="utils.js"></script>
+<script type="text/babel" src="rf-shared.jsx"></script>
+<script type="text/babel" src="compare.jsx"></script>
+<script type="text/babel" src="view-financial.jsx"></script>
+<script type="text/babel" src="view-technicians.jsx"></script>
+<script type="text/babel" src="view-operations.jsx"></script>
+<script type="text/babel" src="view-engagement.jsx"></script>
+<script type="text/babel" src="view-analyze.jsx"></script>
+<script type="text/babel" src="view-tools.jsx"></script>
+<script type="text/babel" src="direction-a.jsx"></script>
+<script type="text/babel" src="direction-b.jsx"></script>
+<script type="text/babel" src="direction-c.jsx"></script>
+
+<script type="text/babel">
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "direction": "A",
+    "theme": "dark",
+    "density": "cozy",
+    "layout": "split",
+    "chart": "area",
+    "accent": "oklch(0.72 0.14 235)",
+    "tab": "financial",
+    "compareMode": true,
+    "compareYear": "ly"
+  }/*EDITMODE-END*/;
+
+  const STORAGE_KEY = 'lex-kpi-tweaks-v2';
+  let state = { ...TWEAK_DEFAULTS };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    state = { ...state, ...saved };
+  } catch (e) {}
+
+  // Build the unified data bundle passed into views
+  const bundle = {
+    financial: window.KPI_DATA,
+    technicians: window.KPI_TECHS,
+    operations: window.KPI_OPS,
+    engagement: window.KPI_ENGAGE,
+    analyze: window.KPI_ANALYZE,
+    tools: window.KPI_TOOLS,
+    asOf: window.KPI_DATA.asOf,
+    period: window.KPI_DATA.period,
+  };
+
+  function render() {
+    const root = document.getElementById('root');
+    if (!root._reactRoot) root._reactRoot = ReactDOM.createRoot(root);
+
+    if (state.direction === 'A') {
+      root._reactRoot.render(
+        <window.DirectionA
+          data={bundle}
+          density={state.density}
+          layout={state.layout}
+          chart={state.chart}
+          accent={state.accent}
+          theme={state.theme}
+          tab={state.tab}
+          onTabChange={(t) => setKey('tab', t)}
+          compareMode={state.compareMode}
+          compareYear={state.compareYear}
+          onCompareToggle={(v) => setKey('compareMode', v)}
+          onCompareYearChange={(v) => setKey('compareYear', v)}
+        />
+      );
+    } else {
+      // B and C still consume the original Financial data shape
+      const Dir = state.direction === 'B' ? window.DirectionB : window.DirectionC;
+      root._reactRoot.render(
+        <Dir data={window.KPI_DATA} density={state.density} layout={state.layout}
+             chart={state.chart} accent={state.accent} theme={state.theme}/>
+      );
+    }
+
+    // Sync body bg to match current direction
+    document.body.style.background = state.theme === 'light'
+      ? (state.direction === 'B' ? 'oklch(0.97 0.008 75)'
+        : state.direction === 'C' ? 'oklch(0.98 0.005 260)'
+        : 'oklch(0.99 0.003 85)')
+      : (state.direction === 'B' ? 'oklch(0.17 0.012 55)'
+        : state.direction === 'C' ? 'oklch(0.12 0.008 260)'
+        : 'oklch(0.14 0.01 255)');
+    syncTweaksUI();
+  }
+
+  function setKey(key, value) {
+    state[key] = value;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){}
+    try { window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [key]: value } }, '*'); } catch(e){}
+    render();
+  }
+
+  function syncTweaksUI() {
+    document.querySelectorAll('.tweaks [data-key]').forEach(group => {
+      const key = group.getAttribute('data-key');
+      group.querySelectorAll('button').forEach(btn => {
+        btn.classList.toggle('on', btn.getAttribute('data-v') === state[key]);
+      });
+    });
+  }
+
+  document.querySelectorAll('.tweaks [data-key]').forEach(group => {
+    const key = group.getAttribute('data-key');
+    group.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      setKey(key, btn.getAttribute('data-v'));
+    });
+  });
+
+  const panel = document.getElementById('tweaks');
+  const toggleBtn = document.getElementById('tweaks-toggle');
+  const closeBtn = document.getElementById('tweaks-close');
+  function openPanel() { panel.classList.add('open'); toggleBtn.style.display = 'none'; }
+  function closePanel() { panel.classList.remove('open'); toggleBtn.style.display = ''; }
+  toggleBtn.addEventListener('click', openPanel);
+  closeBtn.addEventListener('click', closePanel);
+
+  window.addEventListener('message', (ev) => {
+    const d = ev.data || {};
+    if (d.type === '__activate_edit_mode') openPanel();
+    else if (d.type === '__deactivate_edit_mode') closePanel();
+  });
+  try { window.parent.postMessage({ type: '__edit_mode_available' }, '*'); } catch(e){}
+
+  render();
+</script>
+</body>
+</html>
