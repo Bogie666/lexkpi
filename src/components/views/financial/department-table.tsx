@@ -17,23 +17,28 @@ export interface DepartmentTableProps {
 export function DepartmentTable({ data, compareMode }: DepartmentTableProps) {
   const compareOn = compareMode === 'ly' || compareMode === 'ly2';
   const compareKey: 'ly' | 'ly2' = compareMode === 'ly2' ? 'ly2' : 'ly';
+  const compareLabel = compareKey === 'ly2' ? '2024' : 'LY';
 
   return (
-    <Panel
-      eyebrow="Departments"
-      title="Revenue by department"
-      padding="cozy"
-    >
+    <Panel eyebrow="Departments" title="Revenue by department" padding="cozy">
       <div className="overflow-x-auto -mx-2 px-2">
         <table className="w-full text-left">
           <thead>
             <tr className="col-head border-b border-border">
               <th className="py-2 pr-4 font-normal">Department</th>
               <th className="py-2 pr-4 font-normal text-right">Revenue</th>
-              <th className="py-2 pr-4 font-normal text-right">Target</th>
-              <th className="py-2 pr-4 font-normal text-right hidden md:table-cell">% to Goal</th>
+              {compareOn ? (
+                <th className="py-2 pr-4 font-normal text-right hidden md:table-cell">
+                  {compareLabel}
+                </th>
+              ) : (
+                <th className="py-2 pr-4 font-normal text-right hidden md:table-cell">Target</th>
+              )}
+              {!compareOn && (
+                <th className="py-2 pr-4 font-normal text-right hidden lg:table-cell">% to Goal</th>
+              )}
               <th className="py-2 pr-4 font-normal text-right">
-                {compareOn ? 'Δ vs ' + (compareKey === 'ly2' ? '2024' : 'LY') : 'vs Last'}
+                {compareOn ? `Δ vs ${compareLabel}` : 'vs Last'}
               </th>
               <th className="py-2 pr-2 font-normal text-right hidden lg:table-cell">Trend</th>
             </tr>
@@ -41,8 +46,12 @@ export function DepartmentTable({ data, compareMode }: DepartmentTableProps) {
           <tbody>
             {data.departments.map((d) => {
               const pctGoal = (d.revenue.value / d.target) * 100;
+              const baseVal = d.revenue[compareKey];
               return (
-                <tr key={d.code} className="border-b border-border/60 last:border-0 hover:bg-surface-2/20 transition-colors">
+                <tr
+                  key={d.code}
+                  className="border-b border-border/60 last:border-0 hover:bg-surface-2/20 transition-colors"
+                >
                   <td className="py-3 pr-4">
                     <div className="flex items-center gap-3">
                       <span
@@ -56,31 +65,39 @@ export function DepartmentTable({ data, compareMode }: DepartmentTableProps) {
                   <td className="py-3 pr-4 text-right font-mono tabular-nums text-[14px]">
                     {fmtMoney(d.revenue.value)}
                   </td>
-                  <td className="py-3 pr-4 text-right font-mono tabular-nums text-[13px] text-muted">
-                    {fmtMoney(d.target)}
-                  </td>
-                  <td className="py-3 pr-4 hidden md:table-cell">
-                    <div className="flex items-center justify-end gap-2">
-                      <div className="w-20 h-1 bg-surface-2 rounded-full overflow-hidden">
-                        <div
-                          className="h-full transition-[width] duration-300 ease-out"
-                          style={{
-                            width: `${Math.min(pctGoal, 100)}%`,
-                            background: `var(${d.colorToken})`,
-                          }}
-                        />
+                  {compareOn ? (
+                    <td className="py-3 pr-4 text-right font-mono tabular-nums text-[13px] text-muted hidden md:table-cell">
+                      {baseVal !== undefined ? fmtMoney(baseVal) : '—'}
+                    </td>
+                  ) : (
+                    <td className="py-3 pr-4 text-right font-mono tabular-nums text-[13px] text-muted hidden md:table-cell">
+                      {fmtMoney(d.target)}
+                    </td>
+                  )}
+                  {!compareOn && (
+                    <td className="py-3 pr-4 hidden lg:table-cell">
+                      <div className="flex items-center justify-end gap-2">
+                        <div className="w-20 h-1 bg-surface-2 rounded-full overflow-hidden">
+                          <div
+                            className="h-full transition-[width] duration-300 ease-out"
+                            style={{
+                              width: `${Math.min(pctGoal, 100)}%`,
+                              background: `var(${d.colorToken})`,
+                            }}
+                          />
+                        </div>
+                        <span className="font-mono tabular-nums text-[12px] text-muted w-12 text-right">
+                          {fmtPercent(Math.round(pctGoal * 100))}
+                        </span>
                       </div>
-                      <span className="font-mono tabular-nums text-[12px] text-muted w-12 text-right">
-                        {fmtPercent(Math.round(pctGoal * 100))}
-                      </span>
-                    </div>
-                  </td>
+                    </td>
+                  )}
                   <td className="py-3 pr-4 text-right">
                     <div className="flex justify-end">
-                      {compareOn && d.revenue[compareKey] !== undefined ? (
+                      {compareOn && baseVal !== undefined ? (
                         <ComparePill
                           current={d.revenue.value}
-                          comparison={d.revenue[compareKey]!}
+                          comparison={baseVal}
                           unit="cents"
                           baseline={compareKey}
                           size="sm"

@@ -3,6 +3,8 @@
 import { Panel } from '@/components/primitives/panel';
 import { Stat } from '@/components/primitives/stat';
 import { AreaTrend, type AreaTrendPoint } from '@/components/charts/area-trend';
+import { DualTrend, type DualTrendPoint } from '@/components/charts/dual-trend';
+import { TrendLegend } from '@/components/charts/trend-legend';
 import { fmtMoney } from '@/lib/format/money';
 import { fmtPercent } from '@/lib/format/percent';
 import type { FinancialResponse } from '@/lib/types/kpi';
@@ -22,17 +24,52 @@ function compareModeToStat(m: CompareMode): 'prev' | 'ly' | 'ly2' | 'none' {
 
 export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
   const { total, trend } = data;
-  const trendPoints: AreaTrendPoint[] = trend.map((t) => ({
-    label: String(Number(t.date.slice(-2))),
-    value: t.actual,
-    target: t.target,
-  }));
+  const compareOn = compareMode === 'ly' || compareMode === 'ly2';
+  const compareYear: 'ly' | 'ly2' = compareMode === 'ly2' ? 'ly2' : 'ly';
 
   const pctToGoal = total.percentToGoal / 100;
   const subMeta = (
     <span className="font-mono tabular-nums">
       {fmtPercent(total.percentToGoal)} of {fmtMoney(total.target)} goal · {data.meta.period}
     </span>
+  );
+
+  const xLabel = (t: (typeof trend)[number]) => String(Number(t.date.slice(-2)));
+
+  const chart = compareOn ? (
+    <div className="flex flex-col gap-3 h-full">
+      <div className="flex-1 min-h-[220px]">
+        <DualTrend
+          data={
+            trend.map((t) => ({
+              label: xLabel(t),
+              actual: t.actual,
+              ly: t.ly,
+              ly2: t.ly2,
+              target: t.target,
+            })) satisfies DualTrendPoint[]
+          }
+          mode={compareYear}
+          unit="cents"
+          height={260}
+        />
+      </div>
+      <TrendLegend mode={compareYear} />
+    </div>
+  ) : (
+    <div className="min-h-[220px] aspect-[16/9] lg:aspect-auto">
+      <AreaTrend
+        data={
+          trend.map((t) => ({
+            label: xLabel(t),
+            value: t.actual,
+            target: t.target,
+          })) satisfies AreaTrendPoint[]
+        }
+        height={260}
+        unit="cents"
+      />
+    </div>
   );
 
   return (
@@ -47,7 +84,6 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
           emphasis="hero"
           sub={subMeta}
         />
-        {/* Goal progress bar */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between text-[12px] text-muted">
             <span className="text-eyebrow uppercase">Progress to goal</span>
@@ -63,9 +99,7 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
           </div>
         </div>
       </div>
-      <div className="min-h-[220px] aspect-[16/9] lg:aspect-auto">
-        <AreaTrend data={trendPoints} height={260} unit="cents" />
-      </div>
+      {chart}
     </Panel>
   );
 }

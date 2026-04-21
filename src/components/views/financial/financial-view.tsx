@@ -1,12 +1,15 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useFinancial } from '@/lib/hooks/use-financial';
 import { useDashboardParams } from '@/lib/state/url-params';
 import { SectionHead } from '@/components/primitives/section-head';
 import { PeriodTabs } from '@/components/primitives/period-tabs';
 import { Skeleton } from '@/components/primitives/skeleton';
 import { Panel } from '@/components/primitives/panel';
+import { CompareBanner } from '@/components/layout/compare-banner';
 import { fmtAsOf } from '@/lib/format/date';
+import { financialInsights } from '@/lib/insights/financial';
 import { FinancialHero } from './financial-hero';
 import { FinancialKPIStrip } from './financial-kpi-strip';
 import { DepartmentTable } from './department-table';
@@ -15,6 +18,14 @@ import { PotentialRevenuePanel } from './potential-revenue-panel';
 export function FinancialView() {
   const [params, setParams] = useDashboardParams();
   const { data, isLoading, error, refetch } = useFinancial(params);
+
+  const compareOn = params.compare === 'ly' || params.compare === 'ly2';
+  const compareYear: 'ly' | 'ly2' = params.compare === 'ly2' ? 'ly2' : 'ly';
+
+  const insights = useMemo(
+    () => (data && compareOn ? financialInsights(data, compareYear) : []),
+    [data, compareOn, compareYear],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -70,6 +81,9 @@ export function FinancialView() {
 
       {data && (
         <>
+          {compareOn && insights.length > 0 && (
+            <CompareBanner insights={insights} mode={compareYear} />
+          )}
           <FinancialHero data={data} compareMode={params.compare} />
           <FinancialKPIStrip data={data} compareMode={params.compare} />
           <div className="grid gap-6 grid-cols-1 xl:grid-cols-[minmax(0,2.4fr)_minmax(0,1fr)]">
