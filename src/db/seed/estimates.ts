@@ -18,11 +18,15 @@ interface DeptTargets {
 }
 
 const DEPT_TARGETS: DeptTargets[] = [
-  { code: 'hvac',        opps: 12_408, closeRatePct: 44.2, avgTicketDollars: 1_450, unsoldDollars: 982_000 },
-  { code: 'plumbing',    opps:  7_214, closeRatePct: 41.8, avgTicketDollars: 1_120, unsoldDollars: 412_000 },
-  { code: 'electrical',  opps:  4_882, closeRatePct: 39.4, avgTicketDollars:   980, unsoldDollars: 268_000 },
-  { code: 'commercial',  opps:  2_412, closeRatePct: 46.1, avgTicketDollars: 2_180, unsoldDollars: 180_000 },
-  { code: 'maintenance', opps:  1_500, closeRatePct: 48.6, avgTicketDollars:   440, unsoldDollars:  22_000 },
+  // HVAC Service (trade service work — repair, diagnose, bolt-on upsells)
+  { code: 'hvac_service',     opps:  8_000, closeRatePct: 46.8, avgTicketDollars: 1_320, unsoldDollars: 520_000 },
+  // HVAC Sales (equipment replacements + new-system quotes; bigger tickets, higher unsold)
+  { code: 'hvac_sales',       opps:  4_408, closeRatePct: 39.2, avgTicketDollars: 7_200, unsoldDollars: 462_000 },
+  // HVAC Maintenance (Cool Club, tune-ups)
+  { code: 'hvac_maintenance', opps:  1_500, closeRatePct: 48.6, avgTicketDollars:   440, unsoldDollars:  22_000 },
+  { code: 'plumbing',         opps:  7_214, closeRatePct: 41.8, avgTicketDollars: 1_120, unsoldDollars: 412_000 },
+  { code: 'commercial',       opps:  2_412, closeRatePct: 46.1, avgTicketDollars: 2_180, unsoldDollars: 180_000 },
+  { code: 'electrical',       opps:  4_882, closeRatePct: 39.4, avgTicketDollars:   980, unsoldDollars: 268_000 },
 ];
 
 // Mock seasonality "close" values — used as monthly weights for distributing opps

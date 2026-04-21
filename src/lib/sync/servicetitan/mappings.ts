@@ -1,70 +1,74 @@
 /**
- * Translation maps between ST's raw strings and our internal dimension codes.
+ * ServiceTitan BusinessUnit → dashboard department.
  *
- * ST's Accounting report returns business-unit names like "Commercial Install",
- * "HVAC Maintenance", "Plumbing Service" — fine-grained sub-divisions that
- * roll up into the 5 dashboard departments. We match by substring, priority-
- * ordered so e.g. "HVAC Maintenance" → hvac (not maintenance) and
- * "Cool Club" → maintenance.
+ * Source of truth: the explicit list provided by the Lex team. Matches are
+ * exact (case-insensitive after trim) so no surprises — anything missing
+ * falls through to `null` and gets reported in `unmappedBusinessUnits` on
+ * the next sync so we can add a line here.
  *
- * Anything that falls through is returned unmapped; the sync logs it so we
- * can add a rule without silently miscounting revenue.
+ * To edit: add a new line to BU_TO_DEPT below. No other code needs to change.
  */
 
-export const DEPT_CODES = ['hvac', 'plumbing', 'electrical', 'commercial', 'maintenance'] as const;
+export const DEPT_CODES = [
+  'hvac_service',
+  'hvac_sales',
+  'hvac_maintenance',
+  'plumbing',
+  'commercial',
+  'electrical',
+] as const;
 export type DepartmentCode = (typeof DEPT_CODES)[number];
 
-/** Explicit overrides — checked first, exact match (case-insensitive after trim). */
-const EXPLICIT_OVERRIDES: Record<string, DepartmentCode> = {
-  // Examples; extend as real ST names surface.
-  'cool club': 'maintenance',
-  'comfort club': 'maintenance',
-  'maintenance club': 'maintenance',
+/** Lowercased, trimmed name → department code. null means drop. */
+const BU_TO_DEPT: Record<string, DepartmentCode | null> = {
+  // ── HVAC Service ──────────────────────────────────────────────────────
+  'lex service':               'hvac_service',
+  'lyons service':             'hvac_service',
+
+  // ── HVAC Sales ────────────────────────────────────────────────────────
+  'lex install - equipment':               'hvac_sales',
+  'lex sales':                              'hvac_sales',
+  'lex install - ducts & insulation':       'hvac_sales',
+  'lyons sales':                            'hvac_sales',
+  'lyons install - ducts & insulation':     'hvac_sales',
+  'lyons install - equipment':              'hvac_sales',
+
+  // ── HVAC Maintenance ──────────────────────────────────────────────────
+  'lex maintenance':           'hvac_maintenance',
+  'lyons maintenance':         'hvac_maintenance',
+
+  // ── Plumbing ──────────────────────────────────────────────────────────
+  'plumbing service':          'plumbing',
+  'plumbing maintenance':      'plumbing',
+  'plumbing install':          'plumbing',
+
+  // ── Commercial ────────────────────────────────────────────────────────
+  'commercial install':        'commercial',
+  'commercial sales':          'commercial',
+  'commercial service':        'commercial',
+  'commercial maintenance':    'commercial',
+
+  // ── Electrical ────────────────────────────────────────────────────────
+  'electrical maintenance':    'electrical',
+  'electrical service':        'electrical',
+
+  // ── Explicitly dropped ────────────────────────────────────────────────
+  'etx install - ducts & insulation': null,
+  'etx maintenance':                  null,
+  'etx service':                      null,
+  'etx install - equipment':          null,
+  'etx sales':                        null,
+  'service star':                     null,
 };
-
-/** Ordered substring rules — first match wins. */
-const SUBSTRING_RULES: Array<{ contains: string; code: DepartmentCode }> = [
-  // "Commercial …" always wins because commercial divisions exist inside
-  // multiple trades in ST — we want them counted as a single commercial bucket.
-  { contains: 'commercial', code: 'commercial' },
-
-  // Membership-club work is its own bucket.
-  { contains: 'cool club', code: 'maintenance' },
-  { contains: 'comfort club', code: 'maintenance' },
-
-  // Trade buckets
-  { contains: 'plumbing', code: 'plumbing' },
-  { contains: 'electrical', code: 'electrical' },
-  { contains: 'hvac', code: 'hvac' },
-
-  // Generic maintenance catch-all, lowest priority so it doesn't steal
-  // "HVAC Maintenance" (that matches 'hvac' above first).
-  { contains: 'maintenance', code: 'maintenance' },
-];
-
-/**
- * BUs prefixed with ETX are East Texas — a separate location we explicitly
- * don't track in this dashboard. Drop them silently (no unmapped log noise).
- */
-function isExcludedLocation(lower: string): boolean {
-  return /^etx[\s-]/.test(lower) || lower === 'etx';
-}
 
 export function mapBusinessUnitToDepartment(raw: string | null): DepartmentCode | null {
   if (!raw) return null;
-  const lower = raw.toLowerCase().trim();
-  if (!lower) return null;
-  if (isExcludedLocation(lower)) return null;
+  const key = raw.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (!(key in BU_TO_DEPT)) return null;
+  return BU_TO_DEPT[key];
+}
 
-  // Strip a leading location prefix ("LEX " / "Lexington ") so the substring
-  // rules below match regardless of whether the BU includes one.
-  const stripped = lower.replace(/^(lex|lexington)[\s-]+/, '');
-
-  const explicit = EXPLICIT_OVERRIDES[stripped] ?? EXPLICIT_OVERRIDES[lower];
-  if (explicit) return explicit;
-
-  for (const rule of SUBSTRING_RULES) {
-    if (stripped.includes(rule.contains)) return rule.code;
-  }
-  return null;
+/** For admin-panel introspection: list every explicit mapping. */
+export function listBusinessUnitMappings(): Array<{ bu: string; dept: DepartmentCode | null }> {
+  return Object.entries(BU_TO_DEPT).map(([bu, dept]) => ({ bu, dept }));
 }

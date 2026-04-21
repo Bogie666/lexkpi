@@ -18,15 +18,18 @@
   --down:      oklch(0.70 0.18 25);
   --warning:   oklch(0.80 0.16 85);
 
-  /* Department swatches */
-  --d-hvac:              oklch(0.68 0.15 240);
-  --d-plumbing:          oklch(0.68 0.14 185);
-  --d-electrical:        oklch(0.72 0.15 85);
-  --d-commercial:        oklch(0.66 0.16 295);
-  --d-maintenance:       oklch(0.70 0.12 30);
-  --d-hvac-service:      oklch(0.72 0.14 220);
-  --d-hvac-replacement:  oklch(0.66 0.16 260);
-  --d-tyler:             oklch(0.70 0.13 160);
+  /* Department swatches — one per dashboard department (6 total).
+     Names mirror the department `code` strings so `var(--d-${code})` resolves. */
+  --d-hvac_service:      oklch(0.72 0.14 220);   /* sky/blue — front-line service */
+  --d-hvac_sales:        oklch(0.66 0.16 260);   /* violet — install / equipment */
+  --d-hvac_maintenance:  oklch(0.70 0.12 30);    /* warm amber — recurring */
+  --d-plumbing:          oklch(0.68 0.14 185);   /* teal */
+  --d-commercial:        oklch(0.66 0.16 295);   /* purple */
+  --d-electrical:        oklch(0.72 0.15 85);    /* yellow-green */
+
+  /* Legacy aliases — still resolves for any lingering 'hvac' / 'maintenance' code. */
+  --d-hvac:              var(--d-hvac_service);
+  --d-maintenance:       var(--d-hvac_maintenance);
 
   /* Tinted pill backgrounds */
   --up-bg:      color-mix(in oklch, var(--up) 12%, transparent);
