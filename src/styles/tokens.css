@@ -1,0 +1,61 @@
+/* Lex KPI Dashboard — Design tokens (Direction A · Refined)
+   Mirrors UI-SPEC §4.1 exactly. Referenced from globals.css via @theme. */
+
+:root {
+  /* Surfaces */
+  --bg:        oklch(0.18 0.01 255);
+  --surface:   oklch(0.22 0.012 255);
+  --surface-2: oklch(0.26 0.014 255);
+  --border:    oklch(0.32 0.01 255);
+
+  /* Text */
+  --text:      oklch(0.97 0 0);
+  --muted:     oklch(0.68 0.01 255);
+
+  /* Semantic */
+  --accent:    oklch(0.72 0.14 235);
+  --up:        oklch(0.78 0.15 150);
+  --down:      oklch(0.70 0.18 25);
+  --warning:   oklch(0.80 0.16 85);
+
+  /* Department swatches */
+  --d-hvac:              oklch(0.68 0.15 240);
+  --d-plumbing:          oklch(0.68 0.14 185);
+  --d-electrical:        oklch(0.72 0.15 85);
+  --d-commercial:        oklch(0.66 0.16 295);
+  --d-maintenance:       oklch(0.70 0.12 30);
+  --d-hvac-service:      oklch(0.72 0.14 220);
+  --d-hvac-replacement:  oklch(0.66 0.16 260);
+  --d-tyler:             oklch(0.70 0.13 160);
+
+  /* Tinted pill backgrounds */
+  --up-bg:      color-mix(in oklch, var(--up) 12%, transparent);
+  --down-bg:    color-mix(in oklch, var(--down) 12%, transparent);
+  --warning-bg: color-mix(in oklch, var(--warning) 12%, transparent);
+  --accent-bg:  color-mix(in oklch, var(--accent) 12%, transparent);
+
+  /* Navigation backdrop */
+  --nav-bg: color-mix(in oklch, var(--bg) 85%, transparent);
+
+  /* Shadows */
+  --shadow-podium: 0 8px 24px color-mix(in oklch, var(--accent) 10%, transparent);
+  --shadow-panel:  0 4px 12px rgba(0, 0, 0, 0.2);
+  --shadow-modal:  0 10px 40px rgba(0, 0, 0, 0.4);
+
+  /* Density (cozy default) */
+  --density-pad-x: 36px;
+  --density-pad-y: 48px;
+  --density-gap:   24px;
+}
+
+[data-density="compact"] {
+  --density-pad-x: 24px;
+  --density-pad-y: 32px;
+  --density-gap:   12px;
+}
+
+[data-density="spacious"] {
+  --density-pad-x: 56px;
+  --density-pad-y: 72px;
+  --density-gap:   28px;
+}
