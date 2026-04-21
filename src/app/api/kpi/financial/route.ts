@@ -1,148 +1,277 @@
 /**
- * Mock /api/kpi/financial — returns data shaped per DATA-SPEC §GET /api/kpi/financial.
- * Values are in the real units (cents / bps / count) so the UI is exercised as it will be
- * when the real Drizzle-backed handler lands. Data is derived from designspecs/data.js.
- *
- * When the real backend arrives, replace this file with the handler from DATA-SPEC;
- * the response contract is identical.
+ * /api/kpi/financial — real Drizzle queries over financial_daily, targets,
+ * technician_daily (for the KPI strip aggregates), and membership_daily.
+ * Response shape identical to DATA-SPEC §GET /api/kpi/financial.
  */
 import { NextResponse } from 'next/server';
-import type { FinancialResponse } from '@/lib/types/kpi';
+import type { NextRequest } from 'next/server';
+import { and, eq, gte, lte, sql, desc } from 'drizzle-orm';
 
-const DOLLAR = (n: number) => Math.round(n * 100);
+import { db } from '@/db/client';
+import {
+  departments,
+  financialDaily,
+  technicianDaily,
+  membershipDaily,
+  targets,
+} from '@/db/schema';
+import { resolvePeriod, daysInWindow, type Window } from '@/lib/period';
+import type { CompareValue, FinancialResponse } from '@/lib/types/kpi';
 
 export const dynamic = 'force-dynamic';
 
-function buildMock(): FinancialResponse {
-  const total = DOLLAR(2_847_320);
-  const prev = DOLLAR(2_612_840);
-  const ly = DOLLAR(2_484_100);
-  const ly2 = DOLLAR(2_218_400);
-  const target = DOLLAR(3_200_000);
+// Build a dept-level revenue + jobs + opps aggregate for a window.
+async function financialAggregate(window: Window) {
+  const database = db();
+  const rows = await database
+    .select({
+      departmentCode: financialDaily.departmentCode,
+      reportDate: financialDaily.reportDate,
+      totalRevenueCents: financialDaily.totalRevenueCents,
+      jobs: financialDaily.jobs,
+      opportunities: financialDaily.opportunities,
+    })
+    .from(financialDaily)
+    .where(
+      and(
+        gte(financialDaily.reportDate, window.from),
+        lte(financialDaily.reportDate, window.to),
+      ),
+    );
+  return rows;
+}
 
-  const departments = [
-    {
-      code: 'hvac',
-      name: 'HVAC',
-      colorToken: '--d-hvac',
-      revenue: { value: DOLLAR(1_284_500), prev: DOLLAR(1_198_200), ly: DOLLAR(1_102_400), ly2: DOLLAR(986_500), unit: 'cents' as const },
-      target: DOLLAR(1_450_000),
-      jobs: 268,
-      opportunities: 612,
-      spark: [78, 82, 74, 91, 88, 95, 102, 96, 88, 92, 105, 112, 108, 118, 121, 115, 124, 131, 128, 135],
-      lySpark: [68, 72, 68, 80, 78, 82, 88, 84, 78, 82, 90, 95, 92, 98, 102, 98, 104, 108, 106, 112],
-    },
-    {
-      code: 'plumbing',
-      name: 'Plumbing',
-      colorToken: '--d-plumbing',
-      revenue: { value: DOLLAR(712_480), prev: DOLLAR(684_100), ly: DOLLAR(648_200), ly2: DOLLAR(601_100), unit: 'cents' as const },
-      target: DOLLAR(780_000),
-      jobs: 142,
-      opportunities: 288,
-      spark: [42, 38, 45, 52, 48, 44, 51, 56, 52, 49, 58, 61, 57, 64, 62, 66, 68, 65, 71, 68],
-      lySpark: [38, 36, 40, 46, 44, 42, 46, 50, 48, 46, 52, 54, 52, 58, 56, 60, 60, 58, 63, 60],
-    },
-    {
-      code: 'electrical',
-      name: 'Electrical',
-      colorToken: '--d-electrical',
-      revenue: { value: DOLLAR(428_900), prev: DOLLAR(412_600), ly: DOLLAR(396_500), ly2: DOLLAR(358_200), unit: 'cents' as const },
-      target: DOLLAR(520_000),
-      jobs: 98,
-      opportunities: 224,
-      spark: [22, 25, 21, 28, 26, 24, 30, 27, 32, 29, 34, 31, 36, 33, 38, 35, 37, 40, 42, 41],
-      lySpark: [20, 22, 20, 26, 24, 22, 27, 25, 28, 26, 30, 28, 32, 30, 34, 32, 33, 35, 37, 36],
-    },
-    {
-      code: 'commercial',
-      name: 'Commercial HVAC',
-      colorToken: '--d-commercial',
-      revenue: { value: DOLLAR(294_220), prev: DOLLAR(218_940), ly: DOLLAR(209_800), ly2: DOLLAR(178_400), unit: 'cents' as const },
-      target: DOLLAR(300_000),
-      jobs: 38,
-      opportunities: 72,
-      spark: [8, 12, 10, 14, 11, 16, 14, 18, 22, 20, 24, 21, 26, 23, 28, 25, 27, 30, 29, 32],
-      lySpark: [6, 9, 8, 11, 9, 12, 11, 14, 16, 15, 18, 16, 20, 18, 21, 19, 21, 22, 22, 24],
-    },
-    {
-      code: 'maintenance',
-      name: 'Maintenance',
-      colorToken: '--d-maintenance',
-      revenue: { value: DOLLAR(127_220), prev: DOLLAR(99_000), ly: DOLLAR(127_200), ly2: DOLLAR(94_200), unit: 'cents' as const },
-      target: DOLLAR(150_000),
-      jobs: 184,
-      opportunities: 201,
-      spark: [4, 5, 6, 5, 7, 6, 8, 7, 9, 8, 10, 9, 11, 10, 12, 11, 12, 13, 12, 14],
-      lySpark: [4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13],
-    },
-  ];
+async function technicianKpiAggregate(window: Window) {
+  const database = db();
+  const rows = await database
+    .select({
+      totalRevenueCents: sql<number>`COALESCE(SUM(${technicianDaily.revenueCents}), 0)`,
+      totalJobs: sql<number>`COALESCE(SUM(${technicianDaily.jobsCompleted}), 0)`,
+      totalOpps: sql<number>`COALESCE(SUM(${technicianDaily.opportunities}), 0)`,
+    })
+    .from(technicianDaily)
+    .where(
+      and(
+        gte(technicianDaily.reportDate, window.from),
+        lte(technicianDaily.reportDate, window.to),
+      ),
+    );
+  return rows[0] ?? { totalRevenueCents: 0, totalJobs: 0, totalOpps: 0 };
+}
 
-  // Cumulative daily revenue (running total) — matches the designspec shape.
-  const trendRaw = [
-    [1, 78_000, 68_000, 60_000, 106_666],
-    [2, 142_000, 124_000, 110_000, 213_333],
-    [3, 221_000, 192_000, 171_000, 320_000],
-    [4, 312_000, 272_000, 242_000, 426_666],
-    [5, 401_000, 349_000, 312_000, 533_333],
-    [6, 498_000, 434_000, 387_000, 640_000],
-    [7, 582_000, 507_000, 452_000, 746_666],
-    [8, 671_000, 584_000, 521_000, 853_333],
-    [9, 764_000, 665_000, 593_000, 960_000],
-    [10, 851_000, 741_000, 661_000, 1_066_666],
-    [11, 947_000, 824_000, 735_000, 1_173_333],
-    [12, 1_048_000, 912_000, 814_000, 1_280_000],
-    [13, 1_142_000, 994_000, 887_000, 1_386_666],
-    [14, 1_241_000, 1_080_000, 964_000, 1_493_333],
-    [15, 1_348_000, 1_173_000, 1_047_000, 1_600_000],
-    [16, 1_463_000, 1_273_000, 1_136_000, 1_706_666],
-    [17, 1_582_000, 1_377_000, 1_228_000, 1_813_333],
-    [18, 1_698_000, 1_478_000, 1_319_000, 1_920_000],
-    [19, 1_821_000, 1_585_000, 1_414_000, 2_026_666],
-    [20, 2_847_320, 2_484_100, 2_218_400, 2_133_333],
-  ];
+// Latest membership_daily row per tier at or before `to`, summed.
+async function membershipActiveAsOf(dateStr: string): Promise<number> {
+  const database = db();
+  const rows = await database.execute(sql`
+    SELECT SUM(active_end)::bigint AS total
+    FROM (
+      SELECT DISTINCT ON (membership_name) membership_name, active_end
+      FROM ${membershipDaily}
+      WHERE report_date <= ${dateStr}
+      ORDER BY membership_name, report_date DESC
+    ) t
+  `);
+  // execute() returns { rows } on pg. Normalize:
+  const first = (rows as unknown as { rows: Array<{ total: string | number | null }> }).rows?.[0];
+  const total = first?.total;
+  return typeof total === 'number' ? total : total ? Number(total) : 0;
+}
 
-  const trend = trendRaw.map(([day, actual, lyV, ly2V, tgt]) => ({
-    date: `2026-04-${String(day).padStart(2, '0')}`,
-    actual: DOLLAR(actual),
-    ly: DOLLAR(lyV),
-    ly2: DOLLAR(ly2V),
-    target: DOLLAR(tgt),
+function compareValue(
+  value: number,
+  ly: number | undefined,
+  ly2: number | undefined,
+  unit: CompareValue['unit'],
+  prev?: number,
+): CompareValue {
+  return { value, prev, ly, ly2, unit };
+}
+
+export async function GET(req: NextRequest) {
+  const params = req.nextUrl.searchParams;
+  const period = resolvePeriod({
+    preset: params.get('preset'),
+    from: params.get('from'),
+    to: params.get('to'),
+  });
+
+  // Fetch current / LY / LY2 dept aggregates in parallel
+  const [curRows, lyRows, ly2Rows, teamCur, memActive] = await Promise.all([
+    financialAggregate(period.cur),
+    financialAggregate(period.ly),
+    financialAggregate(period.ly2),
+    technicianKpiAggregate(period.cur),
+    membershipActiveAsOf(period.cur.to),
+  ]);
+
+  const database = db();
+  const deptList = await database.select().from(departments).orderBy(departments.sortOrder);
+
+  // Build per-department aggregates + daily spark values
+  const curDays = daysInWindow(period.cur);
+  const lyDays = daysInWindow(period.ly);
+
+  const sumByDept = (rows: typeof curRows) => {
+    const m = new Map<string, number>();
+    for (const r of rows) m.set(r.departmentCode, (m.get(r.departmentCode) ?? 0) + Number(r.totalRevenueCents));
+    return m;
+  };
+  const sparkByDept = (rows: typeof curRows, days: string[]) => {
+    const byKey = new Map<string, Map<string, number>>();
+    for (const r of rows) {
+      if (!byKey.has(r.departmentCode)) byKey.set(r.departmentCode, new Map());
+      byKey.get(r.departmentCode)!.set(r.reportDate, Number(r.totalRevenueCents));
+    }
+    return (code: string) => days.map((d) => byKey.get(code)?.get(d) ?? 0);
+  };
+
+  const curByDept = sumByDept(curRows);
+  const lyByDept = sumByDept(lyRows);
+  const ly2ByDept = sumByDept(ly2Rows);
+  const curSpark = sparkByDept(curRows, curDays);
+  const lySpark = sparkByDept(lyRows, lyDays);
+
+  // Target per dept, resolving the target whose window covers the current window
+  const deptTargets = await database
+    .select()
+    .from(targets)
+    .where(
+      and(
+        eq(targets.metric, 'revenue'),
+        eq(targets.scope, 'department'),
+        lte(targets.effectiveFrom, period.cur.to),
+        gte(targets.effectiveTo, period.cur.from),
+      ),
+    );
+  const targetByDept = new Map(deptTargets.map((t) => [t.scopeValue ?? '', Number(t.targetValue)]));
+
+  // Company-wide target (fallback to sum of dept targets)
+  const companyTargets = await database
+    .select()
+    .from(targets)
+    .where(
+      and(
+        eq(targets.metric, 'revenue'),
+        eq(targets.scope, 'company'),
+        lte(targets.effectiveFrom, period.cur.to),
+        gte(targets.effectiveTo, period.cur.from),
+      ),
+    );
+  const companyTarget =
+    companyTargets.length > 0
+      ? Number(companyTargets[0].targetValue)
+      : Array.from(targetByDept.values()).reduce((a, b) => a + b, 0);
+
+  // Per-dept jobs/opportunities summed
+  const jobsByDept = new Map<string, number>();
+  const oppsByDept = new Map<string, number>();
+  for (const r of curRows) {
+    jobsByDept.set(r.departmentCode, (jobsByDept.get(r.departmentCode) ?? 0) + r.jobs);
+    oppsByDept.set(r.departmentCode, (oppsByDept.get(r.departmentCode) ?? 0) + r.opportunities);
+  }
+
+  // Trend: cumulative daily totals across all depts
+  const dailyCur = new Map<string, number>();
+  const dailyLy = new Map<string, number>();
+  const dailyLy2 = new Map<string, number>();
+  for (const r of curRows) dailyCur.set(r.reportDate, (dailyCur.get(r.reportDate) ?? 0) + Number(r.totalRevenueCents));
+  for (const r of lyRows) dailyLy.set(r.reportDate, (dailyLy.get(r.reportDate) ?? 0) + Number(r.totalRevenueCents));
+  for (const r of ly2Rows) dailyLy2.set(r.reportDate, (dailyLy2.get(r.reportDate) ?? 0) + Number(r.totalRevenueCents));
+
+  const trendDays = curDays;
+  const ly2Days = daysInWindow(period.ly2);
+
+  const cumulative = (map: Map<string, number>, days: string[]) => {
+    let running = 0;
+    const out: number[] = [];
+    for (const d of days) {
+      running += map.get(d) ?? 0;
+      out.push(running);
+    }
+    return out;
+  };
+  const curCum = cumulative(dailyCur, trendDays);
+  const lyCum = cumulative(dailyLy, lyDays);
+  const ly2Cum = cumulative(dailyLy2, ly2Days);
+
+  // Linear target growth across the window
+  const trend = trendDays.map((d, i) => ({
+    date: d,
+    actual: curCum[i] ?? 0,
+    ly: lyCum[i],
+    ly2: ly2Cum[i],
+    target: Math.round(companyTarget * ((i + 1) / trendDays.length)),
   }));
 
-  return {
+  const totalCur = curCum[curCum.length - 1] ?? 0;
+  const totalLy = lyCum[lyCum.length - 1];
+  const totalLy2 = ly2Cum[ly2Cum.length - 1];
+
+  // KPIs
+  const teamRev = Number(teamCur.totalRevenueCents);
+  const teamJobs = Number(teamCur.totalJobs);
+  const teamOpps = Number(teamCur.totalOpps);
+  const closeRateBps = teamOpps > 0 ? Math.round((teamJobs / teamOpps) * 10000) : 0;
+  const avgTicketCents = teamJobs > 0 ? Math.round(teamRev / teamJobs) : 0;
+
+  // Pull LY equivalents for KPIs
+  const teamLy = await technicianKpiAggregate(period.ly);
+  const teamLy2 = await technicianKpiAggregate(period.ly2);
+  const lyCloseBps =
+    Number(teamLy.totalOpps) > 0 ? Math.round((Number(teamLy.totalJobs) / Number(teamLy.totalOpps)) * 10000) : 0;
+  const ly2CloseBps =
+    Number(teamLy2.totalOpps) > 0 ? Math.round((Number(teamLy2.totalJobs) / Number(teamLy2.totalOpps)) * 10000) : 0;
+  const lyAvgTicket =
+    Number(teamLy.totalJobs) > 0 ? Math.round(Number(teamLy.totalRevenueCents) / Number(teamLy.totalJobs)) : 0;
+  const ly2AvgTicket =
+    Number(teamLy2.totalJobs) > 0 ? Math.round(Number(teamLy2.totalRevenueCents) / Number(teamLy2.totalJobs)) : 0;
+
+  const memLy = await membershipActiveAsOf(period.ly.to);
+  const memLy2 = await membershipActiveAsOf(period.ly2.to);
+
+  const body: FinancialResponse = {
     total: {
-      revenue: { value: total, prev, ly, ly2, unit: 'cents' },
-      target,
-      percentToGoal: Math.round((total / target) * 10000),
+      revenue: compareValue(totalCur, totalLy, totalLy2, 'cents'),
+      target: companyTarget,
+      percentToGoal: companyTarget > 0 ? Math.round((totalCur / companyTarget) * 10000) : 0,
     },
-    departments,
+    departments: deptList.map((d) => ({
+      code: d.code,
+      name: d.name,
+      colorToken: d.colorToken,
+      revenue: compareValue(
+        curByDept.get(d.code) ?? 0,
+        lyByDept.get(d.code),
+        ly2ByDept.get(d.code),
+        'cents',
+      ),
+      target: targetByDept.get(d.code) ?? 0,
+      jobs: jobsByDept.get(d.code) ?? 0,
+      opportunities: oppsByDept.get(d.code) ?? 0,
+      spark: curSpark(d.code),
+      lySpark: lySpark(d.code),
+    })),
     trend,
     kpis: {
-      // close rate as bps: 42.8% = 4280
-      closeRate: { value: 4280, prev: 3940, ly: 3820, ly2: 3590, unit: 'bps' },
-      avgTicket: { value: DOLLAR(1_284), prev: DOLLAR(1_198), ly: DOLLAR(1_142), ly2: DOLLAR(1_068), unit: 'cents' },
-      opportunities: { value: 2156, prev: 2021, ly: 1882, ly2: 1704, unit: 'count' },
-      memberships: { value: 8412, prev: 8196, ly: 7608, ly2: 6942, unit: 'count' },
+      closeRate: compareValue(closeRateBps, lyCloseBps, ly2CloseBps, 'bps'),
+      avgTicket: compareValue(avgTicketCents, lyAvgTicket, ly2AvgTicket, 'cents'),
+      opportunities: compareValue(teamOpps, Number(teamLy.totalOpps), Number(teamLy2.totalOpps), 'count'),
+      memberships: compareValue(memActive, memLy, memLy2, 'count'),
     },
     potential: {
-      total: DOLLAR(1_842_000),
-      byDept: [
-        { code: 'hvac', name: 'HVAC', value: DOLLAR(982_000) },
-        { code: 'plumbing', name: 'Plumbing', value: DOLLAR(412_000) },
-        { code: 'electrical', name: 'Electrical', value: DOLLAR(268_000) },
-        { code: 'commercial', name: 'Commercial HVAC', value: DOLLAR(180_000) },
-      ],
+      total: 0,
+      byDept: [],
     },
     meta: {
-      period: 'MTD April',
+      period: period.preset ? period.preset.toUpperCase() : 'Custom',
       asOf: new Date().toISOString(),
-      from: '2026-04-01',
-      to: '2026-04-20',
+      from: period.cur.from,
+      to: period.cur.to,
     },
   };
+
+  return NextResponse.json({ data: body });
 }
 
-export async function GET() {
-  return NextResponse.json({ data: buildMock() });
-}
+// Silence unused import in narrow build paths
+void desc;

@@ -1,51 +1,159 @@
 /**
- * Mock /api/kpi/callcenter — shape per DATA-SPEC. All rate metrics in bps,
- * wait in seconds, counts are integers. Hourly series overlays ly for
- * compare mode.
+ * /api/kpi/callcenter — aggregates call_center_daily and call_center_hourly
+ * into the existing response shape.
  */
 import { NextResponse } from 'next/server';
-import type { CallCenterResponse } from '@/lib/types/kpi';
+import type { NextRequest } from 'next/server';
+import { and, eq, gte, lte, sql, asc } from 'drizzle-orm';
+
+import { db } from '@/db/client';
+import { callCenterDaily, callCenterHourly } from '@/db/schema';
+import { resolvePeriod, type Window } from '@/lib/period';
+import type { CallCenterResponse, CompareValue } from '@/lib/types/kpi';
 
 export const dynamic = 'force-dynamic';
 
-const PCT_TO_BPS = (n: number) => Math.round(n * 100);
-
-function build(): CallCenterResponse {
-  return {
-    kpis: {
-      booked:      { value: 184,  prev: 172,  ly: 158,  ly2: 142,  unit: 'count'   },
-      bookRate:    { value: PCT_TO_BPS(68.4), prev: PCT_TO_BPS(64.2), ly: PCT_TO_BPS(61.8), ly2: PCT_TO_BPS(58.4), unit: 'bps' },
-      avgWait:     { value: 24,   prev: 31,   ly: 38,   ly2: 44,   unit: 'seconds' },
-      abandonRate: { value: PCT_TO_BPS(3.2), prev: PCT_TO_BPS(4.1), ly: PCT_TO_BPS(4.8), ly2: PCT_TO_BPS(5.9), unit: 'bps' },
-    },
-    hourly: [
-      { hr: '6a',  calls: 4,  booked: 2,  lyCalls: 3,  lyBooked: 1  },
-      { hr: '7a',  calls: 12, booked: 8,  lyCalls: 9,  lyBooked: 5  },
-      { hr: '8a',  calls: 22, booked: 15, lyCalls: 18, lyBooked: 11 },
-      { hr: '9a',  calls: 28, booked: 21, lyCalls: 23, lyBooked: 15 },
-      { hr: '10a', calls: 31, booked: 22, lyCalls: 26, lyBooked: 17 },
-      { hr: '11a', calls: 29, booked: 20, lyCalls: 24, lyBooked: 15 },
-      { hr: '12p', calls: 24, booked: 16, lyCalls: 22, lyBooked: 13 },
-      { hr: '1p',  calls: 26, booked: 18, lyCalls: 22, lyBooked: 13 },
-      { hr: '2p',  calls: 18, booked: 12, lyCalls: 16, lyBooked: 9  },
-      { hr: '3p',  calls: 14, booked: 9,  lyCalls: 12, lyBooked: 7  },
-    ],
-    agents: [
-      { name: 'Rachel K.',  calls: 68, booked: 52, rate: PCT_TO_BPS(76.5), lyRate: PCT_TO_BPS(71.2) },
-      { name: 'Marcus D.',  calls: 61, booked: 44, rate: PCT_TO_BPS(72.1), lyRate: PCT_TO_BPS(68.4) },
-      { name: 'Talia P.',   calls: 58, booked: 41, rate: PCT_TO_BPS(70.7), lyRate: PCT_TO_BPS(66.2) },
-      { name: 'Joaquin R.', calls: 54, booked: 36, rate: PCT_TO_BPS(66.7), lyRate: PCT_TO_BPS(64.8) },
-      { name: 'Brianna L.', calls: 49, booked: 31, rate: PCT_TO_BPS(63.3), lyRate: PCT_TO_BPS(61.4) },
-    ],
-    meta: {
-      period: 'Today',
-      asOf: new Date().toISOString(),
-      from: '2026-04-21',
-      to: '2026-04-21',
-    },
-  };
+function compareValue(
+  value: number,
+  ly: number | undefined,
+  ly2: number | undefined,
+  unit: CompareValue['unit'],
+  prev?: number,
+): CompareValue {
+  return { value, prev, ly, ly2, unit };
 }
 
-export async function GET() {
-  return NextResponse.json({ data: build() });
+async function aggregateDaily(window: Window) {
+  const database = db();
+  const rows = await database
+    .select({
+      calls: sql<number>`COALESCE(SUM(${callCenterDaily.totalCalls}), 0)`,
+      booked: sql<number>`COALESCE(SUM(${callCenterDaily.callsBooked}), 0)`,
+      avgWait: sql<number>`COALESCE(AVG(${callCenterDaily.avgWaitSec})::int, 0)`,
+      avgAbandon: sql<number>`COALESCE(AVG(${callCenterDaily.abandonRateBps})::int, 0)`,
+    })
+    .from(callCenterDaily)
+    .where(
+      and(
+        gte(callCenterDaily.reportDate, window.from),
+        lte(callCenterDaily.reportDate, window.to),
+      ),
+    );
+  return rows[0] ?? { calls: 0, booked: 0, avgWait: 0, avgAbandon: 0 };
+}
+
+export async function GET(req: NextRequest) {
+  const params = req.nextUrl.searchParams;
+  const period = resolvePeriod({
+    preset: params.get('preset'),
+    from: params.get('from'),
+    to: params.get('to'),
+  });
+  const database = db();
+
+  const [curAgg, lyAgg, ly2Agg] = await Promise.all([
+    aggregateDaily(period.cur),
+    aggregateDaily(period.ly),
+    aggregateDaily(period.ly2),
+  ]);
+
+  const calls = Number(curAgg.calls);
+  const booked = Number(curAgg.booked);
+  const lyCalls = Number(lyAgg.calls);
+  const lyBooked = Number(lyAgg.booked);
+  const ly2Calls = Number(ly2Agg.calls);
+  const ly2Booked = Number(ly2Agg.booked);
+
+  const bookRate = calls > 0 ? Math.round((booked / calls) * 10000) : 0;
+  const lyBookRate = lyCalls > 0 ? Math.round((lyBooked / lyCalls) * 10000) : 0;
+  const ly2BookRate = ly2Calls > 0 ? Math.round((ly2Booked / ly2Calls) * 10000) : 0;
+
+  // Per-agent rows (current window only)
+  const agentRows = await database
+    .select({
+      name: callCenterDaily.employeeName,
+      calls: sql<number>`SUM(${callCenterDaily.totalCalls})`,
+      booked: sql<number>`SUM(${callCenterDaily.callsBooked})`,
+      rate: sql<number>`AVG(${callCenterDaily.bookingRateBps})::int`,
+    })
+    .from(callCenterDaily)
+    .where(
+      and(
+        gte(callCenterDaily.reportDate, period.cur.from),
+        lte(callCenterDaily.reportDate, period.cur.to),
+      ),
+    )
+    .groupBy(callCenterDaily.employeeName)
+    .orderBy(sql`SUM(${callCenterDaily.callsBooked}) DESC`);
+
+  // Per-agent LY rates for compare mode
+  const lyAgentRows = await database
+    .select({
+      name: callCenterDaily.employeeName,
+      rate: sql<number>`AVG(${callCenterDaily.bookingRateBps})::int`,
+    })
+    .from(callCenterDaily)
+    .where(
+      and(
+        gte(callCenterDaily.reportDate, period.ly.from),
+        lte(callCenterDaily.reportDate, period.ly.to),
+      ),
+    )
+    .groupBy(callCenterDaily.employeeName);
+  const lyRateByName = new Map(lyAgentRows.map((r) => [r.name, Number(r.rate)]));
+
+  // Hourly — take the latest day in-window for pacing display
+  const hourlyRows = await database
+    .select()
+    .from(callCenterHourly)
+    .where(eq(callCenterHourly.reportDate, period.cur.to))
+    .orderBy(asc(callCenterHourly.hour));
+
+  const lyHourlyRows = await database
+    .select()
+    .from(callCenterHourly)
+    .where(eq(callCenterHourly.reportDate, period.ly.to))
+    .orderBy(asc(callCenterHourly.hour));
+  const lyHourly = new Map(lyHourlyRows.map((r) => [r.hour, { total: r.totalCalls, booked: r.callsBooked }]));
+
+  const fmtHour = (h: number) => {
+    if (h === 0) return '12a';
+    if (h < 12) return `${h}a`;
+    if (h === 12) return '12p';
+    return `${h - 12}p`;
+  };
+
+  const body: CallCenterResponse = {
+    kpis: {
+      booked: compareValue(booked, lyBooked, ly2Booked, 'count'),
+      bookRate: compareValue(bookRate, lyBookRate, ly2BookRate, 'bps'),
+      avgWait: compareValue(Number(curAgg.avgWait), Number(lyAgg.avgWait), Number(ly2Agg.avgWait), 'seconds'),
+      abandonRate: compareValue(Number(curAgg.avgAbandon), Number(lyAgg.avgAbandon), Number(ly2Agg.avgAbandon), 'bps'),
+    },
+    hourly: hourlyRows.map((h) => {
+      const lyH = lyHourly.get(h.hour);
+      return {
+        hr: fmtHour(h.hour),
+        calls: h.totalCalls,
+        booked: h.callsBooked,
+        lyCalls: lyH?.total,
+        lyBooked: lyH?.booked,
+      };
+    }),
+    agents: agentRows.map((a) => ({
+      name: a.name,
+      calls: Number(a.calls),
+      booked: Number(a.booked),
+      rate: Number(a.rate),
+      lyRate: lyRateByName.get(a.name),
+    })),
+    meta: {
+      period: period.preset ? period.preset.toUpperCase() : 'Custom',
+      asOf: new Date().toISOString(),
+      from: period.cur.from,
+      to: period.cur.to,
+    },
+  };
+
+  return NextResponse.json({ data: body });
 }
