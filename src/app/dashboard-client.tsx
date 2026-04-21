@@ -4,6 +4,7 @@ import { DashboardShell } from '@/components/layout/dashboard-shell';
 import { useDashboardParams } from '@/lib/state/url-params';
 import { FinancialView } from '@/components/views/financial/financial-view';
 import { TechniciansView } from '@/components/views/technicians/technicians-view';
+import { OperationsView } from '@/components/views/operations/operations-view';
 import { PlaceholderView } from '@/components/views/placeholder-view';
 
 export function DashboardClient() {
@@ -13,12 +14,7 @@ export function DashboardClient() {
     <DashboardShell>
       {params.tab === 'financial' && <FinancialView />}
       {params.tab === 'technicians' && <TechniciansView />}
-      {params.tab === 'operations' && (
-        <PlaceholderView
-          title="Operations"
-          description="Call Center and Memberships sub-tabs. UI-SPEC §5.5."
-        />
-      )}
+      {params.tab === 'operations' && <OperationsView />}
       {params.tab === 'engagement' && (
         <PlaceholderView
           title="Engagement"

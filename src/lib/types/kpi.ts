@@ -111,3 +111,75 @@ export interface TechniciansResponse {
     to: string;
   };
 }
+
+// ─── Call Center ────────────────────────────────────────────────────────────
+
+export interface HourlyCall {
+  hr: string;
+  calls: number;
+  booked: number;
+  lyCalls?: number;
+  lyBooked?: number;
+}
+
+export interface Agent {
+  name: string;
+  calls: number;
+  booked: number;
+  rate: number;    // bps
+  lyRate?: number; // bps
+}
+
+export interface CallCenterResponse {
+  kpis: {
+    booked: CompareValue;      // count
+    bookRate: CompareValue;    // bps
+    avgWait: CompareValue;     // seconds
+    abandonRate: CompareValue; // bps
+  };
+  hourly: HourlyCall[];
+  agents: Agent[];
+  meta: {
+    period: string;
+    asOf: string;
+    from: string;
+    to: string;
+  };
+}
+
+// ─── Memberships ────────────────────────────────────────────────────────────
+
+export interface MembershipSnapshot {
+  active: number;
+  newMonth: number;
+  churnMonth: number;
+  netMonth: number;
+}
+
+export interface MembershipTier {
+  tier: string;
+  count: number;
+  lyCount?: number;
+  price: number;                 // whole dollars
+  colorToken: string;            // e.g. '--d-hvac'
+}
+
+export interface MembershipsResponse {
+  active: number;
+  goal: number;
+  newMonth: number;
+  churnMonth: number;
+  netMonth: number;
+  newWeek: number;
+  ly?: MembershipSnapshot;
+  ly2?: MembershipSnapshot;
+  history: number[];             // 12-month active counts
+  lyHistory?: number[];
+  breakdown: MembershipTier[];
+  meta: {
+    period: string;
+    asOf: string;
+    from: string;
+    to: string;
+  };
+}
