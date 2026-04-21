@@ -3,9 +3,13 @@
  *
  * ST report: 128062649 (category: accounting)
  *
+ * Important: this report aggregates *over the from/to window* and returns one
+ * row per BusinessUnit (Name column) — not one row per day. To get daily grain
+ * we call the report once per day in the requested window.
+ *
  * Upsert key: (department_code, report_date)
- * On first run it also deletes any rows where source_report_id='seed' so
- * the fake April-2026 values from db:seed get replaced by real numbers.
+ * After a successful sync we delete any rows with source_report_id='seed' in
+ * the same window so the fake April-2026 values get replaced.
  */
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
@@ -13,7 +17,6 @@ import { financialDaily } from '@/db/schema';
 import {
   iterateReport,
   buildFieldIndex,
-  cellDate,
   cellNumber,
   cellString,
   type ReportField,
@@ -31,7 +34,7 @@ export const FINANCIAL_CATEGORY = 'accounting';
 export const FINANCIAL_SOURCE = 'st_financial';
 
 export interface SyncWindow {
-  from: string; // YYYY-MM-DD inclusive
+  from: string;
   to: string;
 }
 
@@ -41,6 +44,7 @@ export interface SyncResult {
   rowsUpserted: number;
   rowsDropped: number;
   unmappedBusinessUnits: string[];
+  daysSynced: number;
 }
 
 interface FinancialRow {
@@ -51,66 +55,50 @@ interface FinancialRow {
   opportunities: number;
 }
 
-/**
- * Extract a row from the raw ST report response. The exact column names
- * vary by how the report was defined in the ST UI — we try a few common
- * names and fall through to null if none match.
- */
-function extractRow(row: unknown[], fields: ReportField[]): FinancialRow | { skip: string } {
+function extractRow(
+  row: unknown[],
+  fields: ReportField[],
+  reportDate: string,
+): FinancialRow | { skip: string } {
   const idx = buildFieldIndex(fields);
 
-  // Business unit — try common names
-  const buRaw =
+  const name =
+    cellString(row, idx['Name']) ??
     cellString(row, idx['BusinessUnit']) ??
-    cellString(row, idx['Business Unit']) ??
-    cellString(row, idx['BusinessUnitName']) ??
-    cellString(row, idx['Business Unit Name']);
-  const dept = mapBusinessUnitToDepartment(buRaw);
-  if (!dept) return { skip: buRaw ?? '(null business unit)' };
+    cellString(row, idx['Business Unit']);
+  const dept = mapBusinessUnitToDepartment(name);
+  if (!dept) return { skip: name ?? '(null name)' };
 
-  // Date
-  const date =
-    cellDate(row, idx['Date']) ??
-    cellDate(row, idx['InvoiceDate']) ??
-    cellDate(row, idx['Invoice Date']) ??
-    cellDate(row, idx['ReportDate']);
-  if (!date) return { skip: `no date on ${buRaw}` };
+  // Revenue — prefer TotalRevenue, fall back to composed Invoiced + Adjustment
+  const total =
+    cellNumber(row, idx['TotalRevenue']) ??
+    cellNumber(row, idx['Total Revenue']) ??
+    (cellNumber(row, idx['InvoicedRevenue']) ?? 0) +
+      (cellNumber(row, idx['AdjustmentRevenue']) ?? 0);
 
-  // Revenue — ST Accounting reports usually return Total, sometimes broken out
-  // into Invoiced/Completed/Adjustments. We sum what's available.
-  const invoiced = cellNumber(row, idx['Total'])
-    ?? cellNumber(row, idx['Total Revenue'])
-    ?? cellNumber(row, idx['TotalRevenue'])
-    ?? cellNumber(row, idx['Invoiced'])
-    ?? cellNumber(row, idx['Invoiced Revenue'])
-    ?? cellNumber(row, idx['Revenue'])
-    ?? 0;
-
-  const jobs =
-    cellNumber(row, idx['Jobs']) ??
-    cellNumber(row, idx['Job Count']) ??
-    cellNumber(row, idx['JobCount']) ??
+  const techJobs =
+    cellNumber(row, idx['TechLeadJobs']) ??
+    cellNumber(row, idx['Tech Lead Jobs']) ??
     0;
+  const mktJobs =
+    cellNumber(row, idx['MarketingLeadJobs']) ??
+    cellNumber(row, idx['Marketing Lead Jobs']) ??
+    0;
+
   const opps =
+    cellNumber(row, idx['Opportunity']) ??
     cellNumber(row, idx['Opportunities']) ??
-    cellNumber(row, idx['Opportunity Count']) ??
-    cellNumber(row, idx['OpportunityCount']) ??
     0;
 
   return {
     departmentCode: dept,
-    reportDate: date,
-    totalRevenueCents: Math.round(invoiced * 100),
-    jobs: Math.round(jobs),
+    reportDate,
+    totalRevenueCents: Math.round((total ?? 0) * 100),
+    jobs: Math.round(techJobs + mktJobs),
     opportunities: Math.round(opps),
   };
 }
 
-/**
- * After a successful sync, replace any remaining `source_report_id='seed'`
- * rows in the window with the newly synced ones. Runs once the ingest is
- * committed so we never end up with *no* rows if ST is slow.
- */
 async function purgeSeedRowsForWindow(window: SyncWindow): Promise<number> {
   const database = db();
   const res = await database
@@ -124,6 +112,17 @@ async function purgeSeedRowsForWindow(window: SyncWindow): Promise<number> {
     )
     .returning({ id: financialDaily.id });
   return res.length;
+}
+
+/** Enumerate every YYYY-MM-DD string in the inclusive [from, to] window. */
+function daysIn(window: SyncWindow): string[] {
+  const out: string[] = [];
+  const start = new Date(`${window.from}T00:00:00Z`);
+  const end = new Date(`${window.to}T00:00:00Z`);
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
 }
 
 export async function syncFinancial(
@@ -143,33 +142,37 @@ export async function syncFinancial(
   let dropped = 0;
 
   try {
-    // Aggregate in memory by (dept, date) since ST returns row-per-BU-per-day
-    // already, but we defend against duplicate rows just in case.
+    const days = daysIn(window);
+    // Aggregate per (dept, date). For a 7-day window we make 7 separate
+    // ST calls, each of which returns ~25 rows. That's bounded and well
+    // within rate limits.
     const agg = new Map<string, FinancialRow>();
 
-    for await (const { row, fields } of iterateReport({
-      category: FINANCIAL_CATEGORY,
-      reportId: FINANCIAL_REPORT_ID,
-      parameters: [
-        { name: 'From', value: window.from },
-        { name: 'To', value: window.to },
-      ],
-    })) {
-      fetched++;
-      const res = extractRow(row, fields);
-      if ('skip' in res) {
-        dropped++;
-        unmapped.add(res.skip);
-        continue;
-      }
-      const key = `${res.departmentCode}|${res.reportDate}`;
-      const prev = agg.get(key);
-      if (prev) {
-        prev.totalRevenueCents += res.totalRevenueCents;
-        prev.jobs += res.jobs;
-        prev.opportunities += res.opportunities;
-      } else {
-        agg.set(key, res);
+    for (const day of days) {
+      for await (const { row, fields } of iterateReport({
+        category: FINANCIAL_CATEGORY,
+        reportId: FINANCIAL_REPORT_ID,
+        parameters: [
+          { name: 'From', value: day },
+          { name: 'To', value: day },
+        ],
+      })) {
+        fetched++;
+        const res = extractRow(row, fields, day);
+        if ('skip' in res) {
+          dropped++;
+          unmapped.add(res.skip);
+          continue;
+        }
+        const key = `${res.departmentCode}|${res.reportDate}`;
+        const prev = agg.get(key);
+        if (prev) {
+          prev.totalRevenueCents += res.totalRevenueCents;
+          prev.jobs += res.jobs;
+          prev.opportunities += res.opportunities;
+        } else {
+          agg.set(key, res);
+        }
       }
     }
 
@@ -202,8 +205,6 @@ export async function syncFinancial(
           });
         upserted += batch.length;
       }
-
-      // Now safe to remove any seed rows in the same window
       await purgeSeedRowsForWindow(window);
     }
 
@@ -217,7 +218,8 @@ export async function syncFinancial(
       rowsFetched: fetched,
       rowsUpserted: upserted,
       rowsDropped: dropped,
-      unmappedBusinessUnits: Array.from(unmapped).slice(0, 20),
+      unmappedBusinessUnits: Array.from(unmapped).slice(0, 40),
+      daysSynced: days.length,
     };
   } catch (err) {
     const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);

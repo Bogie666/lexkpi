@@ -31,6 +31,7 @@ export async function GET(req: NextRequest) {
   const reportId = params.get('reportId') ?? '128062649';
   const from = params.get('from') ?? '2026-04-01';
   const to = params.get('to') ?? '2026-04-21';
+  const rows = Math.min(Number(params.get('rows') ?? 10), 200);
 
   try {
     const cfg = readStConfig();
@@ -81,7 +82,7 @@ export async function GET(req: NextRequest) {
       hasMore: j.hasMore,
       fieldCount: j.fields?.length ?? 0,
       fields: j.fields ?? [],
-      sampleRows: (j.data ?? []).slice(0, 3),
+      sampleRows: (j.data ?? []).slice(0, rows),
     });
   } catch (err) {
     return NextResponse.json(

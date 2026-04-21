@@ -1,61 +1,57 @@
 /**
  * Translation maps between ST's raw strings and our internal dimension codes.
- * Inline for now — when we build the admin panel these move to dimension tables.
- */
-
-/**
- * ServiceTitan Business Unit → internal department code.
  *
- * ST typically returns business-unit names like "Lex HVAC Service" or
- * "Lex - HVAC Service". Keys are matched case-insensitively and trimmed.
- * Unmapped units fall through to the raw-string lookup; if still unmapped
- * the sync logs it and drops the row so we don't silently miscount revenue.
+ * ST's Accounting report returns business-unit names like "Commercial Install",
+ * "HVAC Maintenance", "Plumbing Service" — fine-grained sub-divisions that
+ * roll up into the 5 dashboard departments. We match by substring, priority-
+ * ordered so e.g. "HVAC Maintenance" → hvac (not maintenance) and
+ * "Cool Club" → maintenance.
+ *
+ * Anything that falls through is returned unmapped; the sync logs it so we
+ * can add a rule without silently miscounting revenue.
  */
-const BU_MAP_RAW: Record<string, string> = {
-  // HVAC variants
-  'hvac service': 'hvac',
-  'hvac replacement': 'hvac',
-  'hvac install': 'hvac',
-  'hvac repair': 'hvac',
-  hvac: 'hvac',
 
-  // Plumbing
-  plumbing: 'plumbing',
-  'plumbing service': 'plumbing',
+export const DEPT_CODES = ['hvac', 'plumbing', 'electrical', 'commercial', 'maintenance'] as const;
+export type DepartmentCode = (typeof DEPT_CODES)[number];
 
-  // Electrical
-  electrical: 'electrical',
-  'electrical service': 'electrical',
-
-  // Commercial HVAC
-  'commercial hvac': 'commercial',
-  commercial: 'commercial',
-
-  // Maintenance (Cool Club, tune-ups, etc.)
-  maintenance: 'maintenance',
-  'maintenance - hvac': 'maintenance',
+/** Explicit overrides — checked first, exact match (case-insensitive after trim). */
+const EXPLICIT_OVERRIDES: Record<string, DepartmentCode> = {
+  // Examples; extend as real ST names surface.
   'cool club': 'maintenance',
+  'comfort club': 'maintenance',
+  'maintenance club': 'maintenance',
 };
 
-function normalize(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/^lex\s*[-·:]?\s*/i, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+/** Ordered substring rules — first match wins. */
+const SUBSTRING_RULES: Array<{ contains: string; code: DepartmentCode }> = [
+  // "Commercial …" always wins because commercial divisions exist inside
+  // multiple trades in ST — we want them counted as a single commercial bucket.
+  { contains: 'commercial', code: 'commercial' },
 
-/** Returns the internal department code, or null if we should drop the row. */
-export function mapBusinessUnitToDepartment(raw: string | null): string | null {
+  // Membership-club work is its own bucket.
+  { contains: 'cool club', code: 'maintenance' },
+  { contains: 'comfort club', code: 'maintenance' },
+
+  // Trade buckets
+  { contains: 'plumbing', code: 'plumbing' },
+  { contains: 'electrical', code: 'electrical' },
+  { contains: 'hvac', code: 'hvac' },
+
+  // Generic maintenance catch-all, lowest priority so it doesn't steal
+  // "HVAC Maintenance" (that matches 'hvac' above first).
+  { contains: 'maintenance', code: 'maintenance' },
+];
+
+export function mapBusinessUnitToDepartment(raw: string | null): DepartmentCode | null {
   if (!raw) return null;
-  const key = normalize(raw);
-  return BU_MAP_RAW[key] ?? null;
-}
+  const lower = raw.toLowerCase().trim();
+  if (!lower) return null;
 
-export const KNOWN_DEPARTMENT_CODES = [
-  'hvac',
-  'plumbing',
-  'electrical',
-  'commercial',
-  'maintenance',
-] as const;
+  const explicit = EXPLICIT_OVERRIDES[lower];
+  if (explicit) return explicit;
+
+  for (const rule of SUBSTRING_RULES) {
+    if (lower.includes(rule.contains)) return rule.code;
+  }
+  return null;
+}
