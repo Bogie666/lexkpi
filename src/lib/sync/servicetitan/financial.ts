@@ -42,7 +42,8 @@ export interface SyncWindow {
 }
 
 export interface SyncResult {
-  runId: number;
+  runId: number | null;
+  skipped?: 'another_run_active';
   rowsFetched: number;
   rowsUpserted: number;
   rowsDropped: number;
@@ -128,13 +129,25 @@ export async function syncFinancial(
   window: SyncWindow,
   trigger: SyncTrigger,
 ): Promise<SyncResult> {
-  const runId = await startSyncRun({
+  const start = await startSyncRun({
     source: FINANCIAL_SOURCE,
     trigger,
     reportId: FINANCIAL_REPORT_ID,
     windowStart: window.from,
     windowEnd: window.to,
   });
+  if (start.status === 'skipped') {
+    return {
+      runId: null,
+      skipped: start.reason,
+      rowsFetched: 0,
+      rowsUpserted: 0,
+      rowsDropped: 0,
+      unmappedBusinessUnits: [],
+      daysSynced: 0,
+    };
+  }
+  const runId = start.runId;
 
   const unmapped = new Set<string>();
   let fetched = 0;
