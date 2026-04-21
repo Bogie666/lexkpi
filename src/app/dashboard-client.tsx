@@ -3,6 +3,7 @@
 import { DashboardShell } from '@/components/layout/dashboard-shell';
 import { useDashboardParams } from '@/lib/state/url-params';
 import { FinancialView } from '@/components/views/financial/financial-view';
+import { TechniciansView } from '@/components/views/technicians/technicians-view';
 import { PlaceholderView } from '@/components/views/placeholder-view';
 
 export function DashboardClient() {
@@ -11,12 +12,7 @@ export function DashboardClient() {
   return (
     <DashboardShell>
       {params.tab === 'financial' && <FinancialView />}
-      {params.tab === 'technicians' && (
-        <PlaceholderView
-          title="Technicians"
-          description="Role sub-tabs · podium · full leaderboard grid. Spec in UI-SPEC §5.4."
-        />
-      )}
+      {params.tab === 'technicians' && <TechniciansView />}
       {params.tab === 'operations' && (
         <PlaceholderView
           title="Operations"
