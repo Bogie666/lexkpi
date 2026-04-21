@@ -58,7 +58,11 @@ function distributeIntEven(total: number, n: number): number[] {
 }
 
 async function main() {
-  const url = process.env.DATABASE_URL;
+  const url =
+    process.env.DATABASE_URL_UNPOOLED ??
+    process.env.POSTGRES_URL_NON_POOLING ??
+    process.env.DATABASE_URL ??
+    process.env.POSTGRES_URL;
   if (!url) {
     throw new Error('DATABASE_URL not set. Run `vercel env pull .env.local` first.');
   }
