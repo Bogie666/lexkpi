@@ -36,11 +36,54 @@ export interface FetchReportArgs {
   cfg?: StConfig;
 }
 
-const PAGE_CUSHION_MS = 500;
-const MAX_RETRIES = 5;
+// ST Reporting API limit: 5 calls per same-report per minute per tenant.
+// = 12s between calls. We add a small margin and use 13s to be safe.
+const REPORT_MIN_INTERVAL_MS = 13_000;
+const MAX_RETRIES = 8;
+const DEFAULT_RETRY_MS = 1000;
+const MAX_WAIT_MS = 120_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Per-report throttle. Module-scoped Map tracks the last call timestamp for
+ * each reportId within a single serverless invocation. Before every fetch
+ * we sleep until REPORT_MIN_INTERVAL_MS has elapsed since the last call to
+ * the same report. This keeps us cleanly under ST's 5/min limit on the
+ * happy path; fetchWithRetry still handles 429s if two invocations race.
+ */
+const lastReportCallMs = new Map<string, number>();
+
+async function throttleForReport(reportKey: string): Promise<void> {
+  const last = lastReportCallMs.get(reportKey) ?? 0;
+  const elapsed = Date.now() - last;
+  if (elapsed < REPORT_MIN_INTERVAL_MS) {
+    await sleep(REPORT_MIN_INTERVAL_MS - elapsed);
+  }
+  lastReportCallMs.set(reportKey, Date.now());
+}
+
+/**
+ * Extract the server-suggested wait time from a 429 response. ST sends it
+ * two ways — a `Retry-After` header (seconds) and/or the error body text
+ * "Try again in 34 seconds." We honor whichever we find.
+ */
+function parseRetryAfterMs(res: Response, bodyText: string | null): number | null {
+  const header = res.headers.get('retry-after');
+  if (header) {
+    const n = Number(header);
+    if (Number.isFinite(n) && n > 0) return Math.min(n * 1000, MAX_WAIT_MS);
+  }
+  if (bodyText) {
+    const match = /try again in (\d+)\s*seconds?/i.exec(bodyText);
+    if (match) {
+      const n = Number(match[1]);
+      if (Number.isFinite(n) && n > 0) return Math.min(n * 1000, MAX_WAIT_MS);
+    }
+  }
+  return null;
 }
 
 async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
@@ -53,14 +96,25 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
       invalidateAccessToken();
       const cfg = readStConfig();
       const newToken = await getAccessToken(cfg);
-      init.headers = { ...(init.headers as Record<string, string>), Authorization: `Bearer ${newToken}` };
+      init.headers = {
+        ...(init.headers as Record<string, string>),
+        Authorization: `Bearer ${newToken}`,
+      };
       attempt++;
       continue;
     }
 
-    // 429 or 5xx: exponential backoff
+    // 429 or 5xx: respect Retry-After, else exponential backoff
     if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
-      const waitMs = Math.min(1000 * Math.pow(2, attempt), 10_000);
+      let bodyText: string | null = null;
+      try {
+        bodyText = await res.clone().text();
+      } catch {
+        /* ignore */
+      }
+      const suggested = parseRetryAfterMs(res, bodyText);
+      const backoff = Math.min(DEFAULT_RETRY_MS * Math.pow(2, attempt), MAX_WAIT_MS);
+      const waitMs = suggested ?? backoff;
       await sleep(waitMs);
       attempt++;
       continue;
@@ -90,6 +144,8 @@ export async function* iterateReport(args: FetchReportArgs): AsyncGenerator<{
   let loggedFields: ReportField[] | null = null;
 
   do {
+    await throttleForReport(String(args.reportId));
+
     const url = new URL(
       `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-category/${category}/reports/${reportId}/data`,
     );
@@ -126,7 +182,6 @@ export async function* iterateReport(args: FetchReportArgs): AsyncGenerator<{
     }
 
     continuationToken = page.continuationToken ?? null;
-    if (continuationToken) await sleep(PAGE_CUSHION_MS);
   } while (continuationToken);
 }
 
