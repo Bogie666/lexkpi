@@ -42,16 +42,29 @@ const SUBSTRING_RULES: Array<{ contains: string; code: DepartmentCode }> = [
   { contains: 'maintenance', code: 'maintenance' },
 ];
 
+/**
+ * BUs prefixed with ETX are East Texas — a separate location we explicitly
+ * don't track in this dashboard. Drop them silently (no unmapped log noise).
+ */
+function isExcludedLocation(lower: string): boolean {
+  return /^etx[\s-]/.test(lower) || lower === 'etx';
+}
+
 export function mapBusinessUnitToDepartment(raw: string | null): DepartmentCode | null {
   if (!raw) return null;
   const lower = raw.toLowerCase().trim();
   if (!lower) return null;
+  if (isExcludedLocation(lower)) return null;
 
-  const explicit = EXPLICIT_OVERRIDES[lower];
+  // Strip a leading location prefix ("LEX " / "Lexington ") so the substring
+  // rules below match regardless of whether the BU includes one.
+  const stripped = lower.replace(/^(lex|lexington)[\s-]+/, '');
+
+  const explicit = EXPLICIT_OVERRIDES[stripped] ?? EXPLICIT_OVERRIDES[lower];
   if (explicit) return explicit;
 
   for (const rule of SUBSTRING_RULES) {
-    if (lower.includes(rule.contains)) return rule.code;
+    if (stripped.includes(rule.contains)) return rule.code;
   }
   return null;
 }

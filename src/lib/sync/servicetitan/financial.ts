@@ -1,15 +1,18 @@
 /**
- * Sync the Financial (Accounting) report into financial_daily.
+ * Sync the Business-Unit-Dashboard Financial report into financial_daily.
  *
- * ST report: 128062649 (category: accounting)
+ * ST report: 394552917 (category: business-unit-dashboard)
+ * Chosen over the vanilla Accounting report (128062649) because it carries
+ * the full KPI set we need in one call: CompletedJobs, ClosedOpportunities,
+ * pre-computed CloseRate, TotalJobAverage, plus RecallJobs / WarrantyJobs
+ * for quality tracking.
  *
- * Important: this report aggregates *over the from/to window* and returns one
- * row per BusinessUnit (Name column) — not one row per day. To get daily grain
- * we call the report once per day in the requested window.
+ * This report aggregates over the from/to window with one row per BU — no
+ * per-row Date column — so we call it once per day for daily grain.
  *
  * Upsert key: (department_code, report_date)
- * After a successful sync we delete any rows with source_report_id='seed' in
- * the same window so the fake April-2026 values get replaced.
+ * After a successful sync we delete any rows with source_report_id='seed'
+ * in the same window so the fake April-2026 values get replaced.
  */
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
@@ -29,8 +32,8 @@ import {
   type SyncTrigger,
 } from '@/lib/sync/runs';
 
-export const FINANCIAL_REPORT_ID = '128062649';
-export const FINANCIAL_CATEGORY = 'accounting';
+export const FINANCIAL_REPORT_ID = '394552917';
+export const FINANCIAL_CATEGORY = 'business-unit-dashboard';
 export const FINANCIAL_SOURCE = 'st_financial';
 
 export interface SyncWindow {
@@ -69,20 +72,16 @@ function extractRow(
   const dept = mapBusinessUnitToDepartment(name);
   if (!dept) return { skip: name ?? '(null name)' };
 
-  // Revenue — prefer TotalRevenue, fall back to composed Invoiced + Adjustment
+  // Revenue — 394552917 returns TotalRevenue as a decimal dollar amount
   const total =
     cellNumber(row, idx['TotalRevenue']) ??
     cellNumber(row, idx['Total Revenue']) ??
-    (cellNumber(row, idx['InvoicedRevenue']) ?? 0) +
-      (cellNumber(row, idx['AdjustmentRevenue']) ?? 0);
-
-  const techJobs =
-    cellNumber(row, idx['TechLeadJobs']) ??
-    cellNumber(row, idx['Tech Lead Jobs']) ??
     0;
-  const mktJobs =
-    cellNumber(row, idx['MarketingLeadJobs']) ??
-    cellNumber(row, idx['Marketing Lead Jobs']) ??
+
+  // Jobs completed this window
+  const jobs =
+    cellNumber(row, idx['CompletedJobs']) ??
+    cellNumber(row, idx['Completed Jobs']) ??
     0;
 
   const opps =
@@ -94,7 +93,7 @@ function extractRow(
     departmentCode: dept,
     reportDate,
     totalRevenueCents: Math.round((total ?? 0) * 100),
-    jobs: Math.round(techJobs + mktJobs),
+    jobs: Math.round(jobs),
     opportunities: Math.round(opps),
   };
 }
