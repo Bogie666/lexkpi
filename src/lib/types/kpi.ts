@@ -164,6 +164,42 @@ export interface MembershipTier {
   colorToken: string;            // e.g. '--d-hvac'
 }
 
+// ─── Analyze (estimates) ────────────────────────────────────────────────────
+
+export interface SeasonalityPoint {
+  month: string; // 'Apr', 'May', ...
+  closeRateBps: number;
+  avgTicketCents: number;
+}
+
+export interface AnalyzeDeptRow {
+  code: string;
+  name: string;
+  opportunities: number;
+  closeRateBps: number;
+  avgTicketCents: number;
+  unsoldCents: number;
+}
+
+export interface AnalyzeResponse {
+  totals: {
+    opportunities: number;
+    closeRateBps: number;
+    unsoldCents: number;
+    avgTicketCents: number;
+  };
+  tierSelection: Array<{ tier: 'low' | 'mid' | 'high'; count: number; pct: number }>;
+  timeToClose: Array<{ bucket: 'same_day' | 'one_to_7' | 'over_7'; count: number; pct: number }>;
+  seasonality: SeasonalityPoint[];
+  byDept: AnalyzeDeptRow[];
+  meta: {
+    period: string;
+    asOf: string;
+    from: string;
+    to: string;
+  };
+}
+
 export interface MembershipsResponse {
   active: number;
   goal: number;

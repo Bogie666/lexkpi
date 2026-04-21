@@ -32,6 +32,7 @@ import {
   MEMBERSHIP_HISTORY,
   MEMBERSHIP_LY_HISTORY,
 } from './data';
+import { buildEstimateRows } from './estimates';
 
 const DOLLAR = (n: number) => Math.round(n * 100);
 const PCT_TO_BPS = (n: number) => Math.round(n * 100);
@@ -77,6 +78,7 @@ async function main() {
     ${schema.callCenterDaily},
     ${schema.callCenterHourly},
     ${schema.membershipDaily},
+    ${schema.estimateAnalysis},
     ${schema.employees},
     ${schema.technicianRoles},
     ${schema.membershipTiers},
@@ -309,7 +311,18 @@ async function main() {
     notes: 'April 2026 company revenue target (seed)',
   });
 
-  console.log(`✓ Seed complete. fin=${finRows.length} tech=${techRows.length} mem=${memRows.length}`);
+  // ─── Estimate analysis ──────────────────────────────────────────────────
+  console.log('• Seeding estimate_analysis (Analyze view)…');
+  const estRows = buildEstimateRows();
+  // Chunked inserts — 28k rows is fine but Neon HTTP prefers smaller payloads.
+  const CHUNK = 1000;
+  for (let i = 0; i < estRows.length; i += CHUNK) {
+    await db.insert(schema.estimateAnalysis).values(estRows.slice(i, i + CHUNK));
+  }
+
+  console.log(
+    `✓ Seed complete. fin=${finRows.length} tech=${techRows.length} mem=${memRows.length} est=${estRows.length}`,
+  );
 }
 
 main().catch((err) => {

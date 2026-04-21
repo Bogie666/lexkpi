@@ -105,6 +105,32 @@ export const callCenterHourly = pgTable(
   }),
 );
 
+/**
+ * Estimate analysis — raw estimate records. Unlike the daily fact tables,
+ * these are individual records; aggregation happens at query time.
+ */
+export const estimateAnalysis = pgTable(
+  'estimate_analysis',
+  {
+    id: serial('id').primaryKey(),
+    estimateId: text('estimate_id').notNull().unique(),
+    opportunityStatus: text('opportunity_status').notNull(), // 'won' | 'unsold' | 'dismissed'
+    soldOn: date('sold_on'),
+    createdOn: date('created_on').notNull(),
+    subtotalCents: bigint('subtotal_cents', { mode: 'number' }).notNull().default(0),
+    departmentCode: text('department_code'),
+    timeToCloseDays: integer('time_to_close_days'),
+    tierSelected: text('tier_selected'), // 'low' | 'mid' | 'high' | null
+    sourceReportId: text('source_report_id').notNull(),
+    syncedAt: timestamp('synced_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    createdIdx: index('ea_created_idx').on(t.createdOn),
+    statusIdx: index('ea_status_idx').on(t.opportunityStatus),
+    deptIdx: index('ea_dept_idx').on(t.departmentCode),
+  }),
+);
+
 /** Membership daily — per-tier state. */
 export const membershipDaily = pgTable(
   'membership_daily',
