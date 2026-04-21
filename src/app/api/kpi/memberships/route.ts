@@ -1,10 +1,10 @@
 /**
- * /api/kpi/memberships — reads the 12 most recent monthly snapshots per tier,
- * derives current vs LY vs LY2 active counts, new/churn/net.
+ * /api/kpi/memberships — reads membership_daily, derives current / LY / LY2
+ * active counts from the latest row per tier, plus 12-month history.
  */
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { and, gte, lte, eq, asc, desc } from 'drizzle-orm';
+import { and, lte, asc } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { membershipDaily, membershipTiers } from '@/db/schema';
@@ -13,32 +13,38 @@ import type { MembershipsResponse } from '@/lib/types/kpi';
 
 export const dynamic = 'force-dynamic';
 
-async function latestSnapshotsPerTier(asOf: string) {
+interface TierSnapshot {
+  name: string;
+  date: string;
+  active: number;
+  newSales: number;
+  canceled: number;
+  netChange: number;
+}
+
+/** Pick the latest row per tier at or before `asOf`. */
+async function latestSnapshotsPerTier(asOf: string): Promise<TierSnapshot[]> {
   const database = db();
-  // Latest row per tier at or before asOf
-  const rows = await database.execute<{
-    membership_name: string;
-    active_end: number;
-    new_sales: number;
-    canceled: number;
-    net_change: number;
-    report_date: string;
-  }>(
-    /* sql */ `
-      SELECT DISTINCT ON (membership_name)
-        membership_name,
-        active_end,
-        new_sales,
-        canceled,
-        net_change,
-        report_date
-      FROM membership_daily
-      WHERE report_date <= '${asOf.replace(/'/g, '')}'
-      ORDER BY membership_name, report_date DESC
-    `,
-  );
-  // Neon HTTP's execute returns { rows }
-  return (rows as unknown as { rows: Array<{ membership_name: string; active_end: number; new_sales: number; canceled: number; net_change: number; report_date: string; }> }).rows;
+  const rows = await database
+    .select()
+    .from(membershipDaily)
+    .where(lte(membershipDaily.reportDate, asOf));
+
+  const latest = new Map<string, TierSnapshot>();
+  for (const r of rows) {
+    const prior = latest.get(r.membershipName);
+    if (!prior || r.reportDate > prior.date) {
+      latest.set(r.membershipName, {
+        name: r.membershipName,
+        date: r.reportDate,
+        active: Number(r.activeEnd),
+        newSales: Number(r.newSales),
+        canceled: Number(r.canceled),
+        netChange: Number(r.netChange),
+      });
+    }
+  }
+  return Array.from(latest.values());
 }
 
 export async function GET(req: NextRequest) {
@@ -57,52 +63,43 @@ export async function GET(req: NextRequest) {
     database.select().from(membershipTiers).orderBy(asc(membershipTiers.sortOrder)),
   ]);
 
-  const sumField = (rows: typeof curSnap, key: 'active_end' | 'new_sales' | 'canceled' | 'net_change') =>
-    rows.reduce((s, r) => s + Number(r[key] ?? 0), 0);
+  const sumField = (rows: TierSnapshot[], key: 'active' | 'newSales' | 'canceled' | 'netChange') =>
+    rows.reduce((s, r) => s + r[key], 0);
 
-  const active = sumField(curSnap, 'active_end');
-  const newMonth = sumField(curSnap, 'new_sales');
+  const active = sumField(curSnap, 'active');
+  const newMonth = sumField(curSnap, 'newSales');
   const churnMonth = sumField(curSnap, 'canceled');
-  const netMonth = sumField(curSnap, 'net_change');
+  const netMonth = sumField(curSnap, 'netChange');
 
   const ly = {
-    active: sumField(lySnap, 'active_end'),
-    newMonth: sumField(lySnap, 'new_sales'),
+    active: sumField(lySnap, 'active'),
+    newMonth: sumField(lySnap, 'newSales'),
     churnMonth: sumField(lySnap, 'canceled'),
-    netMonth: sumField(lySnap, 'net_change'),
+    netMonth: sumField(lySnap, 'netChange'),
   };
   const ly2 = {
-    active: sumField(ly2Snap, 'active_end'),
-    newMonth: sumField(ly2Snap, 'new_sales'),
+    active: sumField(ly2Snap, 'active'),
+    newMonth: sumField(ly2Snap, 'newSales'),
     churnMonth: sumField(ly2Snap, 'canceled'),
-    netMonth: sumField(ly2Snap, 'net_change'),
+    netMonth: sumField(ly2Snap, 'netChange'),
   };
 
-  // 12-month history — sum each month across all tiers
+  // 12-month history — sum active_end per month across all tiers, ending at period.cur.to
   const historyRows = await database
     .select()
     .from(membershipDaily)
-    .where(
-      and(
-        lte(membershipDaily.reportDate, period.cur.to),
-      ),
-    )
-    .orderBy(desc(membershipDaily.reportDate));
+    .where(and(lte(membershipDaily.reportDate, period.cur.to)));
 
-  // Bucket by month
   const byMonth = new Map<string, number>();
   for (const r of historyRows) {
-    const key = r.reportDate.slice(0, 7); // YYYY-MM
-    if (!byMonth.has(key)) byMonth.set(key, 0);
+    const key = r.reportDate.slice(0, 7);
     byMonth.set(key, (byMonth.get(key) ?? 0) + Number(r.activeEnd));
   }
-  // Turn into ordered list of the last 12 months up to period.cur.to
   const history = monthKeysBefore(period.cur.to, 12).map((k) => byMonth.get(k) ?? 0);
   const lyHistory = monthKeysBefore(period.ly.to, 12).map((k) => byMonth.get(k) ?? 0);
 
-  // Per-tier breakdown using latest rows
-  const curByTier = new Map(curSnap.map((r) => [r.membership_name, Number(r.active_end)]));
-  const lyByTier = new Map(lySnap.map((r) => [r.membership_name, Number(r.active_end)]));
+  const curByTier = new Map(curSnap.map((r) => [r.name, r.active]));
+  const lyByTier = new Map(lySnap.map((r) => [r.name, r.active]));
 
   const breakdown = tiers.map((t) => ({
     tier: t.name,
@@ -145,6 +142,3 @@ function monthKeysBefore(to: string, n: number): string[] {
   }
   return keys;
 }
-
-// silence unused pg import in narrow builds
-void eq;

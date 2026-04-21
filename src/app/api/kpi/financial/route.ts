@@ -62,19 +62,26 @@ async function technicianKpiAggregate(window: Window) {
 // Latest membership_daily row per tier at or before `to`, summed.
 async function membershipActiveAsOf(dateStr: string): Promise<number> {
   const database = db();
-  const rows = await database.execute(sql`
-    SELECT SUM(active_end)::bigint AS total
-    FROM (
-      SELECT DISTINCT ON (membership_name) membership_name, active_end
-      FROM ${membershipDaily}
-      WHERE report_date <= ${dateStr}
-      ORDER BY membership_name, report_date DESC
-    ) t
-  `);
-  // execute() returns { rows } on pg. Normalize:
-  const first = (rows as unknown as { rows: Array<{ total: string | number | null }> }).rows?.[0];
-  const total = first?.total;
-  return typeof total === 'number' ? total : total ? Number(total) : 0;
+  const rows = await database
+    .select({
+      membershipName: membershipDaily.membershipName,
+      reportDate: membershipDaily.reportDate,
+      activeEnd: membershipDaily.activeEnd,
+    })
+    .from(membershipDaily)
+    .where(lte(membershipDaily.reportDate, dateStr));
+
+  // Pick the latest row per tier in JS — tiny data (≤ a few hundred rows).
+  const latest = new Map<string, { date: string; active: number }>();
+  for (const r of rows) {
+    const prior = latest.get(r.membershipName);
+    if (!prior || r.reportDate > prior.date) {
+      latest.set(r.membershipName, { date: r.reportDate, active: Number(r.activeEnd) });
+    }
+  }
+  let total = 0;
+  for (const v of latest.values()) total += v.active;
+  return total;
 }
 
 function compareValue(
