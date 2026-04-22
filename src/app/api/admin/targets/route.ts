@@ -22,7 +22,7 @@
  */
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { targets } from '@/db/schema';
 
@@ -71,6 +71,8 @@ export async function POST(req: NextRequest) {
   const scopeValue = body.scopeValue ?? null;
 
   // Find an existing row at this exact window for this metric/scope.
+  // `scopeValue === null` requires IS NULL, not `= null`; Drizzle's `isNull`
+  // emits the correct SQL.
   const existing = await database
     .select()
     .from(targets)
@@ -78,11 +80,8 @@ export async function POST(req: NextRequest) {
       and(
         eq(targets.metric, body.metric),
         eq(targets.scope, body.scope),
-        // scopeValue can be null for company-wide rows — Drizzle's eq treats
-        // null correctly as IS NULL when the column is nullable.
         scopeValue === null
-          ? // @ts-expect-error Drizzle supports this pattern for nullable columns
-            eq(targets.scopeValue, null)
+          ? isNull(targets.scopeValue)
           : eq(targets.scopeValue, scopeValue),
         eq(targets.effectiveFrom, body.effectiveFrom),
         eq(targets.effectiveTo, body.effectiveTo),
@@ -127,4 +126,19 @@ export async function GET(req: NextRequest) {
   const database = db();
   const rows = await database.select().from(targets);
   return NextResponse.json({ ok: true, count: rows.length, rows });
+}
+
+/** DELETE /api/admin/targets?id=<row-id> — remove a target row. */
+export async function DELETE(req: NextRequest) {
+  if (!authorized(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+  const idParam = req.nextUrl.searchParams.get('id');
+  const id = idParam ? Number(idParam) : NaN;
+  if (!Number.isFinite(id)) {
+    return NextResponse.json({ error: 'id query param required' }, { status: 400 });
+  }
+  const database = db();
+  const deleted = await database.delete(targets).where(eq(targets.id, id)).returning();
+  return NextResponse.json({ ok: true, deleted });
 }
