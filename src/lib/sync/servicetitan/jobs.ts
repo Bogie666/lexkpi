@@ -81,8 +81,6 @@ interface StJobType {
 interface StEstimate {
   id: number;
   jobId?: number | null;
-  status?: { value?: string } | string | null;
-  soldOn?: string | null;
   subtotal?: number | string | null;
 }
 
@@ -112,16 +110,14 @@ function estimateSubtotalCents(e: StEstimate): number {
   return Math.round(n * 100);
 }
 
-function estimateStatus(e: StEstimate): string {
-  if (!e.status) return '';
-  if (typeof e.status === 'string') return e.status;
-  return e.status.value ?? '';
-}
-
 /**
  * Pull every sold estimate in a window around the jobs window, then build
  * a map of jobId → max sold-estimate subtotal (cents). Jobs missing from
  * the map have never had a sold estimate above the lookback window.
+ *
+ * We rely on the server-side status=Sold filter; no client-side
+ * re-check on the status field because ST returns it as a typed
+ * object in some API versions and a string in others.
  */
 async function loadSoldEstimateSubtotals(
   window: SyncWindow,
@@ -138,7 +134,6 @@ async function loadSoldEstimateSubtotals(
   });
   const map = new Map<number, number>();
   for (const e of estimates) {
-    if (estimateStatus(e).toLowerCase() !== 'sold') continue;
     if (!e.jobId) continue;
     const cents = estimateSubtotalCents(e);
     const prior = map.get(e.jobId) ?? 0;
