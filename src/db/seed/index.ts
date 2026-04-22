@@ -31,6 +31,7 @@ import {
   MEMBERSHIP_TIERS,
   MEMBERSHIP_HISTORY,
   MEMBERSHIP_LY_HISTORY,
+  BUSINESS_UNITS,
 } from './data';
 import { buildEstimateRows } from './estimates';
 
@@ -82,6 +83,7 @@ async function main() {
     ${schema.employees},
     ${schema.technicianRoles},
     ${schema.membershipTiers},
+    ${schema.businessUnits},
     ${schema.departments},
     ${schema.targets}
     RESTART IDENTITY CASCADE`);
@@ -115,6 +117,15 @@ async function main() {
       priceCents: t.price * 100,
       colorToken: t.colorToken,
       sortOrder: t.sortOrder,
+    })),
+  );
+
+  console.log('• Seeding business_units…');
+  await db.insert(schema.businessUnits).values(
+    BUSINESS_UNITS.map((b) => ({
+      id: b.id,
+      name: b.name,
+      departmentCode: b.departmentCode,
     })),
   );
 

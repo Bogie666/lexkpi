@@ -207,3 +207,55 @@ export const MEMBERSHIP_TIERS = [
 /** 12-month total active-count history → last entry = current `active`. */
 export const MEMBERSHIP_HISTORY = [7200, 7340, 7480, 7605, 7742, 7860, 7982, 8105, 8210, 8296, 8358, 8412];
 export const MEMBERSHIP_LY_HISTORY = [6480, 6602, 6712, 6820, 6925, 7028, 7128, 7218, 7302, 7385, 7468, 7608];
+
+// ─── Business Units (ServiceTitan) ──────────────────────────────────────────
+
+export interface BusinessUnitSeed {
+  /** ST's numeric BU id. */
+  id: number;
+  /** BU name as shown in ST settings. */
+  name: string;
+  /** Internal department code, or null = drop this BU explicitly. */
+  departmentCode: string | null;
+}
+
+export const BUSINESS_UNITS: BusinessUnitSeed[] = [
+  // ── HVAC Service ────────────────────────────────────────────────────────
+  { id: 6534,      name: 'LEX Service',                        departmentCode: 'hvac_service' },
+  { id: 6540,      name: 'LYONS Service',                      departmentCode: 'hvac_service' },
+
+  // ── HVAC Sales ──────────────────────────────────────────────────────────
+  { id: 7695,      name: 'LEX Install - Equipment',            departmentCode: 'hvac_sales' },
+  { id: 8085,      name: 'LEX Sales',                          departmentCode: 'hvac_sales' },
+  { id: 8204,      name: 'LEX Install - Ducts & Insulation',   departmentCode: 'hvac_sales' },
+  { id: 7698,      name: 'LYONS Sales',                        departmentCode: 'hvac_sales' },
+  { id: 7832,      name: 'LYONS Install - Ducts & Insulation', departmentCode: 'hvac_sales' },
+  { id: 7949,      name: 'LYONS Install - Equipment',          departmentCode: 'hvac_sales' },
+
+  // ── HVAC Maintenance ────────────────────────────────────────────────────
+  { id: 7831,      name: 'LEX Maintenance',                    departmentCode: 'hvac_maintenance' },
+  { id: 8087,      name: 'LYONS Maintenance',                  departmentCode: 'hvac_maintenance' },
+
+  // ── Plumbing ────────────────────────────────────────────────────────────
+  { id: 124467371, name: 'Plumbing Service',                   departmentCode: 'plumbing' },
+  { id: 124468396, name: 'Plumbing Maintenance',               departmentCode: 'plumbing' },
+  { id: 124692394, name: 'Plumbing Install',                   departmentCode: 'plumbing' },
+
+  // ── Commercial ──────────────────────────────────────────────────────────
+  { id: 124928171, name: 'Commercial Install',                 departmentCode: 'commercial' },
+  { id: 124928174, name: 'Commercial Sales',                   departmentCode: 'commercial' },
+  { id: 124928938, name: 'Commercial Service',                 departmentCode: 'commercial' },
+  { id: 124928941, name: 'Commercial Maintenance',             departmentCode: 'commercial' },
+
+  // ── Electrical ──────────────────────────────────────────────────────────
+  { id: 455,       name: 'Electrical Maintenance',             departmentCode: 'electrical' },
+  { id: 161649734, name: 'Electrical Service',                 departmentCode: 'electrical' },
+
+  // ── Explicitly dropped ──────────────────────────────────────────────────
+  { id: 154681094, name: 'ETX Install - Ducts & Insulation',   departmentCode: null },
+  { id: 154681497, name: 'ETX Maintenance',                    departmentCode: null },
+  { id: 154684495, name: 'ETX Service',                        departmentCode: null },
+  { id: 154687321, name: 'ETX Install - Equipment',            departmentCode: null },
+  { id: 154691820, name: 'ETX Sales',                          departmentCode: null },
+  { id: 10194265,  name: 'Service Star',                       departmentCode: null },
+];

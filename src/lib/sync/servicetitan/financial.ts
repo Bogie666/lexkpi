@@ -1,30 +1,21 @@
 /**
- * Sync the Business-Unit-Dashboard Financial report into financial_daily.
+ * Financial sync via ServiceTitan Invoices (raw resource endpoint).
  *
- * ST report: 394552917 (category: business-unit-dashboard)
- * Chosen over the vanilla Accounting report (128062649) because it carries
- * the full KPI set we need in one call: CompletedJobs, ClosedOpportunities,
- * pre-computed CloseRate, TotalJobAverage, plus RecallJobs / WarrantyJobs
- * for quality tracking.
- *
- * This report aggregates over the from/to window with one row per BU — no
- * per-row Date column — so we call it once per day for daily grain.
+ * Replaces the earlier Reports-API-based sync. Each invoice has multiple
+ * line items; each item carries its own business-unit-id. The `Total Revenue`
+ * number on the old Business-Unit-Dashboard report is "sum of item totals,
+ * bucketed by the item's BU, dated by the invoice date."  We replicate that
+ * exactly here, then roll up into the 6 dashboard dept codes via the
+ * business_units dimension table.
  *
  * Upsert key: (department_code, report_date)
  * After a successful sync we delete any rows with source_report_id='seed'
  * in the same window so the fake April-2026 values get replaced.
  */
-import { and, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { financialDaily } from '@/db/schema';
-import {
-  iterateReport,
-  buildFieldIndex,
-  cellNumber,
-  cellString,
-  type ReportField,
-} from './reports';
-import { mapBusinessUnitToDepartment } from './mappings';
+import { businessUnits, financialDaily } from '@/db/schema';
+import { collectResource } from './raw-client';
 import {
   startSyncRun,
   finishSyncRunSuccess,
@@ -32,8 +23,6 @@ import {
   type SyncTrigger,
 } from '@/lib/sync/runs';
 
-export const FINANCIAL_REPORT_ID = '394552917';
-export const FINANCIAL_CATEGORY = 'business-unit-dashboard';
 export const FINANCIAL_SOURCE = 'st_financial';
 
 export interface SyncWindow {
@@ -44,59 +33,57 @@ export interface SyncWindow {
 export interface SyncResult {
   runId: number | null;
   skipped?: 'another_run_active';
-  rowsFetched: number;
+  invoicesFetched: number;
+  itemsProcessed: number;
   rowsUpserted: number;
-  rowsDropped: number;
-  unmappedBusinessUnits: string[];
-  daysSynced: number;
+  itemsDropped: number;
+  unmappedBusinessUnitIds: number[];
 }
 
-interface FinancialRow {
-  departmentCode: string;
-  reportDate: string;
-  totalRevenueCents: number;
-  jobs: number;
-  opportunities: number;
+/**
+ * Shape of an invoice item we care about. ST returns more fields; we pull
+ * only the ones relevant to revenue accounting.
+ */
+interface StInvoiceItem {
+  id: number;
+  skuName?: string;
+  type?: string;                    // 'Service', 'Material', 'Equipment', 'Labor', …
+  total: number;                    // gross for this line item
+  businessUnit?: { id: number; name?: string } | null;
+  generalLedgerAccount?: { id: number; name?: string; type?: string } | null;
 }
 
-function extractRow(
-  row: unknown[],
-  fields: ReportField[],
-  reportDate: string,
-): FinancialRow | { skip: string } {
-  const idx = buildFieldIndex(fields);
+interface StInvoice {
+  id: number;
+  invoicedOn?: string | null;       // ISO date-time
+  invoiceDate?: string | null;      // some ST tenants use this key
+  status?: string;
+  adjustmentToId?: number | null;
+  items?: StInvoiceItem[];
+  businessUnit?: { id: number; name?: string } | null;
+  total?: number;
+}
 
-  const name =
-    cellString(row, idx['Name']) ??
-    cellString(row, idx['BusinessUnit']) ??
-    cellString(row, idx['Business Unit']);
-  const dept = mapBusinessUnitToDepartment(name);
-  if (!dept) return { skip: name ?? '(null name)' };
+function dateOf(inv: StInvoice): string | null {
+  const raw = inv.invoicedOn ?? inv.invoiceDate;
+  if (!raw) return null;
+  return raw.slice(0, 10);
+}
 
-  // Revenue — 394552917 returns TotalRevenue as a decimal dollar amount
-  const total =
-    cellNumber(row, idx['TotalRevenue']) ??
-    cellNumber(row, idx['Total Revenue']) ??
-    0;
-
-  // Jobs completed this window
-  const jobs =
-    cellNumber(row, idx['CompletedJobs']) ??
-    cellNumber(row, idx['Completed Jobs']) ??
-    0;
-
-  const opps =
-    cellNumber(row, idx['Opportunity']) ??
-    cellNumber(row, idx['Opportunities']) ??
-    0;
-
-  return {
-    departmentCode: dept,
-    reportDate,
-    totalRevenueCents: Math.round((total ?? 0) * 100),
-    jobs: Math.round(jobs),
-    opportunities: Math.round(opps),
-  };
+/**
+ * Decide whether a line item counts as "income" for Total Revenue.
+ * Per ST's report definition: `Total Revenue = sum of all income items`.
+ * The General Ledger Account type tells us; if it's missing (older items),
+ * we fall back to counting most line types as income and excluding
+ * known non-income buckets.
+ */
+function isIncomeItem(item: StInvoiceItem): boolean {
+  const glType = item.generalLedgerAccount?.type?.toLowerCase();
+  if (glType === 'income') return true;
+  if (glType && glType !== 'income') return false;
+  // Fallback: non-labor/non-equipment might be cost — but the Reports API
+  // treats all items as income when GL is unset. Match that.
+  return true;
 }
 
 async function purgeSeedRowsForWindow(window: SyncWindow): Promise<number> {
@@ -114,15 +101,12 @@ async function purgeSeedRowsForWindow(window: SyncWindow): Promise<number> {
   return res.length;
 }
 
-/** Enumerate every YYYY-MM-DD string in the inclusive [from, to] window. */
-function daysIn(window: SyncWindow): string[] {
-  const out: string[] = [];
-  const start = new Date(`${window.from}T00:00:00Z`);
-  const end = new Date(`${window.to}T00:00:00Z`);
-  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-    out.push(d.toISOString().slice(0, 10));
-  }
-  return out;
+async function loadBuToDeptMap(): Promise<Map<number, string | null>> {
+  const database = db();
+  const rows = await database
+    .select({ id: businessUnits.id, departmentCode: businessUnits.departmentCode })
+    .from(businessUnits);
+  return new Map(rows.map((r) => [r.id, r.departmentCode]));
 }
 
 export async function syncFinancial(
@@ -132,7 +116,7 @@ export async function syncFinancial(
   const start = await startSyncRun({
     source: FINANCIAL_SOURCE,
     trigger,
-    reportId: FINANCIAL_REPORT_ID,
+    reportId: 'invoices',
     windowStart: window.from,
     windowEnd: window.to,
   });
@@ -140,61 +124,81 @@ export async function syncFinancial(
     return {
       runId: null,
       skipped: start.reason,
-      rowsFetched: 0,
+      invoicesFetched: 0,
+      itemsProcessed: 0,
       rowsUpserted: 0,
-      rowsDropped: 0,
-      unmappedBusinessUnits: [],
-      daysSynced: 0,
+      itemsDropped: 0,
+      unmappedBusinessUnitIds: [],
     };
   }
   const runId = start.runId;
 
-  const unmapped = new Set<string>();
-  let fetched = 0;
-  let dropped = 0;
+  const unmappedBuIds = new Set<number>();
+  let invoicesFetched = 0;
+  let itemsProcessed = 0;
+  let itemsDropped = 0;
 
   try {
-    const days = daysIn(window);
-    // Aggregate per (dept, date). For a 7-day window we make 7 separate
-    // ST calls, each of which returns ~25 rows. That's bounded and well
-    // within rate limits.
-    const agg = new Map<string, FinancialRow>();
+    const buToDept = await loadBuToDeptMap();
 
-    for (const day of days) {
-      for await (const { row, fields } of iterateReport({
-        category: FINANCIAL_CATEGORY,
-        reportId: FINANCIAL_REPORT_ID,
-        parameters: [
-          { name: 'From', value: day },
-          { name: 'To', value: day },
-        ],
-      })) {
-        fetched++;
-        const res = extractRow(row, fields, day);
-        if ('skip' in res) {
-          dropped++;
-          unmapped.add(res.skip);
+    // Pull every invoice in the window (full records, items included).
+    // ST accepts `invoicedOnOrAfter` / `invoicedOnOrBefore` as ISO datetimes;
+    // anchor them to full-day boundaries to include the edges.
+    const invoices = await collectResource<StInvoice>({
+      path: '/accounting/v2/tenant/{tenant}/invoices',
+      query: {
+        invoicedOnOrAfter: `${window.from}T00:00:00Z`,
+        invoicedOnOrBefore: `${window.to}T23:59:59Z`,
+        includeTotal: true,
+      },
+    });
+    invoicesFetched = invoices.length;
+
+    // Aggregate by (dept_code, report_date) over all income items.
+    const agg = new Map<string, { dept: string; date: string; totalCents: number }>();
+    for (const inv of invoices) {
+      const date = dateOf(inv);
+      if (!date) continue;
+      for (const item of inv.items ?? []) {
+        itemsProcessed++;
+        if (!isIncomeItem(item)) {
+          itemsDropped++;
           continue;
         }
-        const key = `${res.departmentCode}|${res.reportDate}`;
-        const prev = agg.get(key);
-        if (prev) {
-          prev.totalRevenueCents += res.totalRevenueCents;
-          prev.jobs += res.jobs;
-          prev.opportunities += res.opportunities;
-        } else {
-          agg.set(key, res);
+        const buId = item.businessUnit?.id ?? inv.businessUnit?.id;
+        if (!buId) {
+          itemsDropped++;
+          continue;
         }
+        if (!buToDept.has(buId)) {
+          itemsDropped++;
+          unmappedBuIds.add(buId);
+          continue;
+        }
+        const dept = buToDept.get(buId);
+        if (!dept) {
+          // Known BU, explicitly dropped (e.g. ETX, Service Star).
+          itemsDropped++;
+          continue;
+        }
+        const cents = Math.round((item.total ?? 0) * 100);
+        const key = `${dept}|${date}`;
+        const prior = agg.get(key);
+        if (prior) prior.totalCents += cents;
+        else agg.set(key, { dept, date, totalCents: cents });
       }
     }
 
     const rows = Array.from(agg.values()).map((r) => ({
-      departmentCode: r.departmentCode,
-      reportDate: r.reportDate,
-      totalRevenueCents: r.totalRevenueCents,
-      jobs: r.jobs,
-      opportunities: r.opportunities,
-      sourceReportId: FINANCIAL_REPORT_ID,
+      departmentCode: r.dept,
+      reportDate: r.date,
+      totalRevenueCents: r.totalCents,
+      // Jobs / opportunities land in a follow-up commit once the Jobs + Estimates
+      // endpoints are wired. For now leave them at 0; the dashboard still
+      // renders revenue correctly and computes close rate from technician_daily.
+      jobs: 0,
+      opportunities: 0,
+      sourceReportId: 'st_invoices',
     }));
 
     let upserted = 0;
@@ -209,8 +213,6 @@ export async function syncFinancial(
             target: [financialDaily.departmentCode, financialDaily.reportDate],
             set: {
               totalRevenueCents: sql.raw(`excluded.total_revenue_cents`),
-              jobs: sql.raw(`excluded.jobs`),
-              opportunities: sql.raw(`excluded.opportunities`),
               sourceReportId: sql.raw(`excluded.source_report_id`),
               syncedAt: new Date(),
             },
@@ -221,17 +223,17 @@ export async function syncFinancial(
     }
 
     await finishSyncRunSuccess(runId, {
-      rowsFetched: fetched,
+      rowsFetched: invoicesFetched,
       rowsUpserted: upserted,
     });
 
     return {
       runId,
-      rowsFetched: fetched,
+      invoicesFetched,
+      itemsProcessed,
       rowsUpserted: upserted,
-      rowsDropped: dropped,
-      unmappedBusinessUnits: Array.from(unmapped).slice(0, 40),
-      daysSynced: days.length,
+      itemsDropped,
+      unmappedBusinessUnitIds: Array.from(unmappedBuIds).slice(0, 40),
     };
   } catch (err) {
     const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
@@ -239,3 +241,6 @@ export async function syncFinancial(
     throw err;
   }
 }
+
+// Silence unused-import warning in build paths that don't reach the table fn.
+void inArray;

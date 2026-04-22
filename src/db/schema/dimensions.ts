@@ -58,3 +58,18 @@ export const membershipTiers = pgTable('membership_tiers', {
   sortOrder: integer('sort_order').notNull().default(0),
   active: boolean('active').notNull().default(true),
 });
+
+/**
+ * ServiceTitan Business Unit dimension — the raw resource endpoints return
+ * `businessUnit.id` (numeric, stable). We map ST IDs to our internal dept
+ * codes here. `departmentCode = null` means "drop this BU" (e.g. ETX, Service
+ * Star) — keeping the row makes explicit-drop intent auditable.
+ */
+export const businessUnits = pgTable('business_units', {
+  id: integer('id').primaryKey(),              // ST's numeric business unit ID
+  name: text('name').notNull(),                // ST-provided display name
+  departmentCode: text('department_code'),     // null = drop
+  active: boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
