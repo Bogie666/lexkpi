@@ -60,6 +60,16 @@ export interface JobsSyncResult {
     closedOpportunities: number;
     closeRatePct: number; // rounded to 2dp
     soldEstimatesMatched: number; // jobs in window with a sold-estimate lookup hit
+    // Per-jobType breakdown of opps. Sorted by descending opp count so the
+    // biggest contributors to overcounting surface first. Useful for
+    // reconciling against ST's report.
+    oppsByType?: Array<{
+      typeId: number;
+      name: string;
+      jobs: number;
+      opps: number;
+      closed: number;
+    }>;
   };
 }
 
@@ -74,6 +84,7 @@ interface StJob {
 
 interface StJobType {
   id: number;
+  name?: string | null;
   soldThreshold?: number | null;
   noCharge?: boolean;
 }
@@ -87,6 +98,7 @@ interface StEstimate {
 interface JobTypeSettings {
   thresholdCents: number;
   noCharge: boolean;
+  name: string;
 }
 
 /**
@@ -150,6 +162,7 @@ async function loadSoldEstimateSubtotals(
 const FALLBACK_SETTINGS: JobTypeSettings = {
   thresholdCents: 1 * 100,
   noCharge: false,
+  name: '(unknown)',
 };
 
 function dateOf(j: StJob): string | null {
@@ -218,7 +231,11 @@ async function loadJobTypeSettings(): Promise<Map<number, JobTypeSettings>> {
       typeof dollars === 'number' && Number.isFinite(dollars)
         ? Math.round(dollars * 100)
         : FALLBACK_SETTINGS.thresholdCents;
-    m.set(t.id, { thresholdCents: threshold, noCharge: Boolean(t.noCharge) });
+    m.set(t.id, {
+      thresholdCents: threshold,
+      noCharge: Boolean(t.noCharge),
+      name: t.name ?? `type#${t.id}`,
+    });
   }
   return m;
 }
@@ -296,6 +313,9 @@ export async function syncJobs(
       string,
       { dept: string; date: string; jobs: number; opps: number; closedOpps: number }
     >();
+    // Per-jobType breakdown — used for the diagnostic on opps overcounting.
+    type TypeStats = { name: string; jobs: number; opps: number; closed: number };
+    const byType = new Map<number, TypeStats>();
     for (const j of jobs) {
       const date = dateOf(j);
       if (!date) {
@@ -321,8 +341,18 @@ export async function syncJobs(
       if (!agg.has(key)) agg.set(key, { dept, date, jobs: 0, opps: 0, closedOpps: 0 });
       const entry = agg.get(key)!;
       entry.jobs += 1;
-      if (isOpportunity(j, jobTypeMap, soldByJob)) entry.opps += 1;
-      if (isClosedOpportunity(j, jobTypeMap, soldByJob)) entry.closedOpps += 1;
+      const opp = isOpportunity(j, jobTypeMap, soldByJob);
+      const closed = isClosedOpportunity(j, jobTypeMap, soldByJob);
+      if (opp) entry.opps += 1;
+      if (closed) entry.closedOpps += 1;
+
+      const typeId = j.jobTypeId ?? 0;
+      const typeName = jobTypeSettings(j, jobTypeMap).name;
+      if (!byType.has(typeId)) byType.set(typeId, { name: typeName, jobs: 0, opps: 0, closed: 0 });
+      const ts = byType.get(typeId)!;
+      ts.jobs += 1;
+      if (opp) ts.opps += 1;
+      if (closed) ts.closed += 1;
     }
 
     const rows = Array.from(agg.values()).map((r) => ({
@@ -371,6 +401,17 @@ export async function syncJobs(
     let soldMatched = 0;
     for (const j of jobs) if (soldByJob.has(j.id)) soldMatched++;
 
+    const oppsByType = Array.from(byType.entries())
+      .map(([typeId, s]) => ({
+        typeId,
+        name: s.name,
+        jobs: s.jobs,
+        opps: s.opps,
+        closed: s.closed,
+      }))
+      .filter((r) => r.opps > 0)
+      .sort((a, b) => b.opps - a.opps);
+
     return {
       runId,
       jobsFetched: fetched,
@@ -383,6 +424,7 @@ export async function syncJobs(
         closedOpportunities: totalClosed,
         closeRatePct,
         soldEstimatesMatched: soldMatched,
+        oppsByType,
       },
     };
   } catch (err) {
