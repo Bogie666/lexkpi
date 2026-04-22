@@ -13,9 +13,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { neon } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
-import { migrate } from 'drizzle-orm/neon-http/migrator';
-import path from 'node:path';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -28,7 +25,14 @@ function authorized(req: NextRequest): boolean {
   return bearer === secret || query === secret;
 }
 
-async function runMigrations(): Promise<{ ok: true }> {
+/**
+ * Idempotent DDL that brings a partially-initialized DB up to the current
+ * schema. Runs `CREATE TABLE IF NOT EXISTS` plus any missing indexes for
+ * tables introduced after the first `db:push`. For a clean DB, use
+ * drizzle-kit push locally; this path exists to patch production when we
+ * can't reach it from a shell.
+ */
+async function runSchema(): Promise<{ tablesEnsured: string[] }> {
   const url =
     process.env.DATABASE_URL_UNPOOLED ??
     process.env.POSTGRES_URL_NON_POOLING ??
@@ -36,9 +40,20 @@ async function runMigrations(): Promise<{ ok: true }> {
     process.env.POSTGRES_URL;
   if (!url) throw new Error('DATABASE_URL not set');
   const sql = neon(url);
-  const database = drizzle(sql);
-  await migrate(database, { migrationsFolder: path.join(process.cwd(), 'drizzle') });
-  return { ok: true };
+
+  // business_units was added after the initial push. Create it idempotently.
+  await sql`
+    CREATE TABLE IF NOT EXISTS business_units (
+      id integer PRIMARY KEY NOT NULL,
+      name text NOT NULL,
+      department_code text,
+      active boolean DEFAULT true NOT NULL,
+      created_at timestamp DEFAULT now() NOT NULL,
+      updated_at timestamp DEFAULT now() NOT NULL
+    )
+  `;
+
+  return { tablesEnsured: ['business_units'] };
 }
 
 async function runSeed() {
@@ -54,13 +69,13 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   if (!authorized(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const mode = req.nextUrl.searchParams.get('mode') ?? 'migrate-and-seed';
+  const mode = req.nextUrl.searchParams.get('mode') ?? 'schema-and-seed';
   const out: Record<string, unknown> = { mode };
   try {
-    if (mode === 'migrate' || mode === 'migrate-and-seed') {
-      out.migrate = await runMigrations();
+    if (mode === 'schema' || mode === 'migrate' || mode === 'schema-and-seed' || mode === 'migrate-and-seed') {
+      out.schema = await runSchema();
     }
-    if (mode === 'seed' || mode === 'migrate-and-seed') {
+    if (mode === 'seed' || mode === 'schema-and-seed' || mode === 'migrate-and-seed') {
       out.seed = await runSeed();
     }
     return NextResponse.json({ ok: true, ...out });
