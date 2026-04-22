@@ -56,6 +56,33 @@ function fmtDateRange(from: string, to: string): string {
   return `${from} → ${to}`;
 }
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function yearOf(date: string): number {
+  return Number(date.slice(0, 4));
+}
+function monthKeyOf(date: string): string {
+  return date.slice(0, 7); // YYYY-MM
+}
+function monthLabel(key: string): string {
+  const [y, m] = key.split('-').map(Number);
+  return `${MONTH_NAMES[m - 1]} ${y}`;
+}
+function compareRowsInMonth(a: TargetRow, b: TargetRow): number {
+  // Company first, then departments alphabetically, then other scopes
+  const scopeOrder = { company: 0, department: 1, role: 2, employee: 3 } as const;
+  if (scopeOrder[a.scope] !== scopeOrder[b.scope]) {
+    return scopeOrder[a.scope] - scopeOrder[b.scope];
+  }
+  if ((a.scopeValue ?? '') !== (b.scopeValue ?? '')) {
+    return (a.scopeValue ?? '').localeCompare(b.scopeValue ?? '');
+  }
+  return a.metric.localeCompare(b.metric);
+}
+
 export function TargetsClient() {
   const { data, isLoading, error, refetch } = useTargetsList();
   const upsert = useTargetUpsert();
@@ -64,17 +91,39 @@ export function TargetsClient() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null);
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
-  const sorted = useMemo(() => {
-    if (!data) return [];
-    return data.slice().sort((a, b) => {
-      if (a.scope !== b.scope) return a.scope === 'company' ? -1 : 1;
-      if (a.metric !== b.metric) return a.metric.localeCompare(b.metric);
-      if ((a.scopeValue ?? '') !== (b.scopeValue ?? ''))
-        return (a.scopeValue ?? '').localeCompare(b.scopeValue ?? '');
-      return a.effectiveFrom.localeCompare(b.effectiveFrom);
+  // Years actually represented in the data, plus the current year so new
+  // targets have somewhere to land.
+  const availableYears = useMemo(() => {
+    const set = new Set<number>();
+    set.add(new Date().getUTCFullYear());
+    (data ?? []).forEach((r) => {
+      set.add(yearOf(r.effectiveFrom));
+      set.add(yearOf(r.effectiveTo));
     });
+    return Array.from(set).sort((a, b) => b - a);
   }, [data]);
+
+  // Default to current year on first load (or most-recent with data).
+  const activeYear = selectedYear ?? availableYears[0] ?? new Date().getUTCFullYear();
+
+  // Bucket the filtered rows by month key, within the selected year.
+  const monthGroups = useMemo(() => {
+    const groups = new Map<string, TargetRow[]>();
+    (data ?? []).forEach((r) => {
+      if (yearOf(r.effectiveFrom) !== activeYear) return;
+      const key = monthKeyOf(r.effectiveFrom);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r);
+    });
+    // Sort each month's rows
+    groups.forEach((rows) => rows.sort(compareRowsInMonth));
+    // Return sorted by month descending (newest first)
+    return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [data, activeYear]);
+
+  const totalInYear = monthGroups.reduce((sum, [, rows]) => sum + rows.length, 0);
 
   const notify = (kind: 'success' | 'error', msg: string) => {
     setToast({ kind, msg });
@@ -152,90 +201,125 @@ export function TargetsClient() {
       )}
 
       {data && (
-        <Panel eyebrow={`${data.length} targets`} title="All active and historical targets" padding="cozy">
-          <div className="overflow-x-auto -mx-2 px-2">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="col-head border-b border-border">
-                  <th className="py-2 pr-4 font-normal">Scope</th>
-                  <th className="py-2 pr-4 font-normal">Metric</th>
-                  <th className="py-2 pr-4 font-normal hidden md:table-cell">Window</th>
-                  <th className="py-2 pr-4 font-normal text-right">Target</th>
-                  <th className="py-2 pr-2 font-normal text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((row) =>
-                  editingId === row.id ? (
-                    <tr key={row.id} className="border-b border-border/60">
-                      <td colSpan={5} className="py-4">
-                        <TargetForm
-                          mode="edit"
-                          initial={row}
-                          onCancel={() => setEditingId(null)}
-                          onSave={onSave}
-                          busy={upsert.isPending}
-                        />
-                      </td>
-                    </tr>
-                  ) : (
-                    <tr
-                      key={row.id}
-                      className="border-b border-border/60 last:border-0 hover:bg-surface-2/20 transition-colors"
+        <>
+          <YearTabs
+            years={availableYears}
+            active={activeYear}
+            onChange={setSelectedYear}
+          />
+
+          {monthGroups.length === 0 ? (
+            <Panel padding="cozy">
+              <div className="py-8 text-center text-[13px] text-muted">
+                No targets set for {activeYear} yet.
+              </div>
+            </Panel>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {monthGroups.map(([monthKey, rows]) => (
+                <Panel
+                  key={monthKey}
+                  eyebrow={`${rows.length} target${rows.length === 1 ? '' : 's'}`}
+                  title={monthLabel(monthKey)}
+                  padding="cozy"
+                  right={
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setShowAdd(true);
+                        setEditingId(null);
+                      }}
                     >
-                      <td className="py-3 pr-4">
-                        <div className="flex items-center gap-2">
-                          {row.scope === 'company' ? (
-                            <Pill tone="accent" size="sm">
-                              Company
-                            </Pill>
+                      <Plus className="h-3.5 w-3.5" />
+                      Add
+                    </Button>
+                  }
+                >
+                  <div className="overflow-x-auto -mx-2 px-2">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="col-head border-b border-border">
+                          <th className="py-2 pr-4 font-normal">Scope</th>
+                          <th className="py-2 pr-4 font-normal">Metric</th>
+                          <th className="py-2 pr-4 font-normal hidden lg:table-cell">Window</th>
+                          <th className="py-2 pr-4 font-normal text-right">Target</th>
+                          <th className="py-2 pr-2 font-normal text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row) =>
+                          editingId === row.id ? (
+                            <tr key={row.id} className="border-b border-border/60">
+                              <td colSpan={5} className="py-4">
+                                <TargetForm
+                                  mode="edit"
+                                  initial={row}
+                                  onCancel={() => setEditingId(null)}
+                                  onSave={onSave}
+                                  busy={upsert.isPending}
+                                />
+                              </td>
+                            </tr>
                           ) : (
-                            <span
-                              aria-hidden="true"
-                              className="h-2.5 w-2.5 rounded-full shrink-0"
-                              style={{
-                                background:
-                                  row.scope === 'department' && row.scopeValue
-                                    ? `var(--d-${row.scopeValue})`
-                                    : 'var(--muted)',
-                              }}
-                            />
-                          )}
-                          <span className="text-[13px] font-medium">{scopeLabel(row)}</span>
-                        </div>
-                      </td>
-                      <td className="py-3 pr-4 text-[13px]">{metricInfo(row.metric).label}</td>
-                      <td className="py-3 pr-4 hidden md:table-cell text-[12px] text-muted font-mono tabular-nums">
-                        {fmtDateRange(row.effectiveFrom, row.effectiveTo)}
-                      </td>
-                      <td className="py-3 pr-4 text-right font-mono tabular-nums text-[14px] font-medium">
-                        {formatTargetValue(row)}
-                      </td>
-                      <td className="py-3 pr-2 text-right">
-                        <div className="inline-flex gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => setEditingId(row.id)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                            Edit
-                          </Button>
-                          <Button size="sm" variant="danger" onClick={() => onDelete(row.id)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ),
-                )}
-                {sorted.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="py-8 text-center text-[13px] text-muted">
-                      No targets yet. Add one above.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                            <tr
+                              key={row.id}
+                              className="border-b border-border/60 last:border-0 hover:bg-surface-2/20 transition-colors"
+                            >
+                              <td className="py-3 pr-4">
+                                <div className="flex items-center gap-2">
+                                  {row.scope === 'company' ? (
+                                    <Pill tone="accent" size="sm">
+                                      Company
+                                    </Pill>
+                                  ) : (
+                                    <span
+                                      aria-hidden="true"
+                                      className="h-2.5 w-2.5 rounded-full shrink-0"
+                                      style={{
+                                        background:
+                                          row.scope === 'department' && row.scopeValue
+                                            ? `var(--d-${row.scopeValue})`
+                                            : 'var(--muted)',
+                                      }}
+                                    />
+                                  )}
+                                  <span className="text-[13px] font-medium">{scopeLabel(row)}</span>
+                                </div>
+                              </td>
+                              <td className="py-3 pr-4 text-[13px]">{metricInfo(row.metric).label}</td>
+                              <td className="py-3 pr-4 hidden lg:table-cell text-[12px] text-muted font-mono tabular-nums">
+                                {fmtDateRange(row.effectiveFrom, row.effectiveTo)}
+                              </td>
+                              <td className="py-3 pr-4 text-right font-mono tabular-nums text-[14px] font-medium">
+                                {formatTargetValue(row)}
+                              </td>
+                              <td className="py-3 pr-2 text-right">
+                                <div className="inline-flex gap-1">
+                                  <Button size="sm" variant="ghost" onClick={() => setEditingId(row.id)}>
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    Edit
+                                  </Button>
+                                  <Button size="sm" variant="danger" onClick={() => onDelete(row.id)}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ),
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Panel>
+              ))}
+            </div>
+          )}
+
+          <div className="text-[11px] text-muted font-mono tabular-nums text-right">
+            {totalInYear} target{totalInYear === 1 ? '' : 's'} in {activeYear} · {data.length} total
           </div>
-        </Panel>
+        </>
       )}
 
       {toast && (
@@ -246,6 +330,46 @@ export function TargetsClient() {
           {toast.msg}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Year selector ──────────────────────────────────────────────────────────
+
+function YearTabs({
+  years,
+  active,
+  onChange,
+}: {
+  years: number[];
+  active: number;
+  onChange: (y: number) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Year"
+      className="inline-flex items-center gap-0.5 p-1 bg-surface border border-border rounded-btn self-start"
+    >
+      {years.map((y) => {
+        const isActive = y === active;
+        return (
+          <button
+            key={y}
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(y)}
+            className={
+              'text-[12px] font-mono tabular-nums font-medium px-3 py-1 rounded-[6px] transition-colors ' +
+              (isActive
+                ? 'bg-surface-2 text-text shadow-[inset_0_0_0_1px_var(--border)]'
+                : 'text-muted hover:text-text hover:bg-surface-2/40')
+            }
+          >
+            {y}
+          </button>
+        );
+      })}
     </div>
   );
 }
