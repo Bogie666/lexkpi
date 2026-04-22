@@ -138,7 +138,9 @@ export async function GET(req: NextRequest) {
   const curSpark = sparkByDept(curRows, curDays);
   const lySpark = sparkByDept(lyRows, lyDays);
 
-  // Target per dept, resolving the target whose window covers the current window
+  // Per-dept revenue targets whose window overlaps the current window. Sum
+  // all overlapping rows per dept — a YTD view hits four monthly targets,
+  // and we want the combined goal (not just the last month's).
   const deptTargets = await database
     .select()
     .from(targets)
@@ -150,9 +152,13 @@ export async function GET(req: NextRequest) {
         gte(targets.effectiveTo, period.cur.from),
       ),
     );
-  const targetByDept = new Map(deptTargets.map((t) => [t.scopeValue ?? '', Number(t.targetValue)]));
+  const targetByDept = new Map<string, number>();
+  for (const t of deptTargets) {
+    const code = t.scopeValue ?? '';
+    targetByDept.set(code, (targetByDept.get(code) ?? 0) + Number(t.targetValue));
+  }
 
-  // Company-wide target (fallback to sum of dept targets)
+  // Company-wide revenue targets (usually none now; team opted for auto-sum).
   const companyTargets = await database
     .select()
     .from(targets)
@@ -164,9 +170,10 @@ export async function GET(req: NextRequest) {
         gte(targets.effectiveTo, period.cur.from),
       ),
     );
+  const companySumFromRows = companyTargets.reduce((s, t) => s + Number(t.targetValue), 0);
   const companyTarget =
-    companyTargets.length > 0
-      ? Number(companyTargets[0].targetValue)
+    companySumFromRows > 0
+      ? companySumFromRows
       : Array.from(targetByDept.values()).reduce((a, b) => a + b, 0);
 
   // Per-dept jobs/opportunities summed
@@ -201,29 +208,39 @@ export async function GET(req: NextRequest) {
   const lyCum = cumulative(dailyLy, lyDays);
   const ly2Cum = cumulative(dailyLy2, ly2Days);
 
-  // Target row (company-wide) also tells us the target's effective window.
-  // We prorate across THAT window (usually a full calendar month), not the
-  // trend window — otherwise a MTD view makes the target line hit the full
-  // monthly goal at day 20, which overstates pace.
-  const companyTargetRow = companyTargets[0];
-  const targetEffFrom = companyTargetRow?.effectiveFrom ?? period.cur.from;
-  const targetEffTo = companyTargetRow?.effectiveTo ?? period.cur.to;
-  const targetTotalDays = Math.max(
-    1,
-    daysInWindow({ from: targetEffFrom, to: targetEffTo }).length,
-  );
+  // Daily target curve. For each day, sum the per-day contribution of every
+  // target row whose effective window includes that day. A monthly target
+  // contributes targetValue / daysInMonth to each day in that month. If the
+  // display window spans multiple monthly targets, their daily contributions
+  // stack naturally. If no targets are set for a day, it contributes 0.
+  type TargetRow = { effectiveFrom: string; effectiveTo: string; targetValue: unknown };
+  const applicableRows: TargetRow[] =
+    companyTargets.length > 0 ? companyTargets : deptTargets;
+  const rowMeta = applicableRows.map((t) => {
+    const days = daysInWindow({ from: t.effectiveFrom, to: t.effectiveTo }).length || 1;
+    return {
+      from: t.effectiveFrom,
+      to: t.effectiveTo,
+      perDay: Number(t.targetValue) / days,
+    };
+  });
+  const dailyTarget = (day: string): number => {
+    let sum = 0;
+    for (const m of rowMeta) {
+      if (day >= m.from && day <= m.to) sum += m.perDay;
+    }
+    return sum;
+  };
 
+  let targetCum = 0;
   const trend = trendDays.map((d, i) => {
-    // day-of-target-window = how many days into the target's effective range
-    // this trend point falls (clamped to [0, N]).
-    const dayIdx = daysInWindow({ from: targetEffFrom, to: d }).length;
-    const dayOfTarget = Math.min(Math.max(dayIdx, 0), targetTotalDays);
+    targetCum += dailyTarget(d);
     return {
       date: d,
       actual: curCum[i] ?? 0,
       ly: lyCum[i],
       ly2: ly2Cum[i],
-      target: Math.round((companyTarget / targetTotalDays) * dayOfTarget),
+      target: Math.round(targetCum),
     };
   });
 
