@@ -51,19 +51,23 @@ interface StJob {
   jobStatus?: string;
   completedOn?: string | null;
   businessUnitId?: number | null;
+  jobTypeId?: number | null;
   noCharge?: boolean;
   recallForId?: number | null;
   warrantyId?: number | null;
   total?: number | string | null;
 }
 
+interface StJobType {
+  id: number;
+  soldThreshold?: number | null;
+}
+
 /**
- * Dollar threshold above which a completed opportunity counts as "closed".
- * ST's report uses a configurable "sold threshold" from tenant settings;
- * we approximate with a low flat value to exclude $0 invoices. Refine
- * later by reading the setting (/settings/v2/...) if the delta matters.
+ * Fallback threshold (cents) for jobs whose jobTypeId isn't in the types
+ * map — e.g. archived types. Set low so we don't silently drop real opps.
  */
-const SOLD_THRESHOLD_CENTS = 100 * 100;
+const FALLBACK_THRESHOLD_CENTS = 1 * 100;
 
 function jobTotalCents(j: StJob): number {
   const raw = j.total;
@@ -78,30 +82,49 @@ function dateOf(j: StJob): string | null {
   return j.completedOn.slice(0, 10);
 }
 
+function thresholdCents(j: StJob, map: Map<number, number>): number {
+  if (!j.jobTypeId) return FALLBACK_THRESHOLD_CENTS;
+  return map.get(j.jobTypeId) ?? FALLBACK_THRESHOLD_CENTS;
+}
+
 /**
  * ST's "Sales Opportunity" rule (per the team-provided definition):
  *
  *   A completed job counts as a sales opportunity if it is NOT marked
  *   No-Charge / Non-Opportunity. A no-charge job is still a sales
  *   opportunity if it has a sold estimate with subtotal ≥ the sales
- *   threshold. Warranty and recall status do NOT exclude a job from
- *   being a sales opportunity.
+ *   threshold set on the job's JobType. Warranty and recall status do
+ *   NOT exclude a job from being a sales opportunity.
  *
  * We approximate "sold estimate subtotal" using the job's `total` field
  * (ST exposes the rolled-up total on the job record). When we later wire
  * the Estimates sync, swap in the precise value from the sold estimate.
  */
-function isOpportunity(j: StJob): boolean {
+function isOpportunity(j: StJob, thresholds: Map<number, number>): boolean {
   if (!j.noCharge) return true;
-  return jobTotalCents(j) >= SOLD_THRESHOLD_CENTS;
+  return jobTotalCents(j) >= thresholdCents(j, thresholds);
 }
 
 /**
  * Closed Opportunity: a completed job whose sold-estimate subtotal is
- * ≥ the sales threshold. Approximated with the job's `total` field.
+ * ≥ the job type's sold threshold. Approximated with the job's `total`.
  */
-function isClosedOpportunity(j: StJob): boolean {
-  return jobTotalCents(j) >= SOLD_THRESHOLD_CENTS;
+function isClosedOpportunity(j: StJob, thresholds: Map<number, number>): boolean {
+  return jobTotalCents(j) >= thresholdCents(j, thresholds);
+}
+
+async function loadJobTypeThresholds(): Promise<Map<number, number>> {
+  const types = await collectResource<StJobType>({
+    path: '/jpm/v2/tenant/{tenant}/job-types',
+    query: {},
+  });
+  const m = new Map<number, number>();
+  for (const t of types) {
+    const dollars = t.soldThreshold;
+    if (typeof dollars !== 'number' || !Number.isFinite(dollars)) continue;
+    m.set(t.id, Math.round(dollars * 100));
+  }
+  return m;
 }
 
 async function loadBuToDeptMap(): Promise<Map<number, string | null>> {
@@ -155,7 +178,10 @@ export async function syncJobs(
   let dropped = 0;
 
   try {
-    const buToDept = await loadBuToDeptMap();
+    const [buToDept, jobTypeThresholds] = await Promise.all([
+      loadBuToDeptMap(),
+      loadJobTypeThresholds(),
+    ]);
 
     // Pull all completed jobs in the window.
     const jobs = await collectResource<StJob>({
@@ -198,8 +224,8 @@ export async function syncJobs(
       if (!agg.has(key)) agg.set(key, { dept, date, jobs: 0, opps: 0, closedOpps: 0 });
       const entry = agg.get(key)!;
       entry.jobs += 1;
-      if (isOpportunity(j)) entry.opps += 1;
-      if (isClosedOpportunity(j)) entry.closedOpps += 1;
+      if (isOpportunity(j, jobTypeThresholds)) entry.opps += 1;
+      if (isClosedOpportunity(j, jobTypeThresholds)) entry.closedOpps += 1;
     }
 
     const rows = Array.from(agg.values()).map((r) => ({
