@@ -31,7 +31,7 @@ export const DEPARTMENTS: DeptSeed[] = [
     lySpark: [38, 40, 38, 44, 43, 46, 48, 46, 43, 45, 50, 53, 51, 54, 56, 54, 57, 59, 58, 62],
     jobs: 180,
     opportunities: 412,
-    monthlyTargetDollars: 900_000,
+    monthlyTargetDollars: 175_000,
   },
   {
     code: 'hvac_sales',
@@ -43,7 +43,7 @@ export const DEPARTMENTS: DeptSeed[] = [
     lySpark: [30, 32, 30, 36, 35, 36, 40, 38, 35, 37, 40, 43, 41, 44, 46, 44, 47, 49, 48, 50],
     jobs: 88,
     opportunities: 200,
-    monthlyTargetDollars: 550_000,
+    monthlyTargetDollars: 1_240_000,
   },
   {
     code: 'hvac_maintenance',
@@ -55,7 +55,7 @@ export const DEPARTMENTS: DeptSeed[] = [
     lySpark: [4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13],
     jobs: 184,
     opportunities: 201,
-    monthlyTargetDollars: 150_000,
+    monthlyTargetDollars: 250_000,
   },
   {
     code: 'plumbing',
@@ -67,7 +67,7 @@ export const DEPARTMENTS: DeptSeed[] = [
     lySpark: [38, 36, 40, 46, 44, 42, 46, 50, 48, 46, 52, 54, 52, 58, 56, 60, 60, 58, 63, 60],
     jobs: 142,
     opportunities: 288,
-    monthlyTargetDollars: 780_000,
+    monthlyTargetDollars: 275_000,
   },
   {
     code: 'commercial',
@@ -79,7 +79,7 @@ export const DEPARTMENTS: DeptSeed[] = [
     lySpark: [6, 9, 8, 11, 9, 12, 11, 14, 16, 15, 18, 16, 20, 18, 21, 19, 21, 22, 22, 24],
     jobs: 38,
     opportunities: 72,
-    monthlyTargetDollars: 300_000,
+    monthlyTargetDollars: 100_000,
   },
   {
     code: 'electrical',
@@ -91,7 +91,7 @@ export const DEPARTMENTS: DeptSeed[] = [
     lySpark: [20, 22, 20, 26, 24, 22, 27, 25, 28, 26, 30, 28, 32, 30, 34, 32, 33, 35, 37, 36],
     jobs: 98,
     opportunities: 224,
-    monthlyTargetDollars: 520_000,
+    monthlyTargetDollars: 40_000,
   },
 ];
 
