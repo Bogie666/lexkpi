@@ -65,30 +65,42 @@ export async function GET(req: NextRequest) {
       for (const k of Object.keys(t)) allKeys.add(k);
     }
 
-    // Pluck likely threshold fields if present.
+    // Pluck threshold / opportunity / noCharge fields and any boolean flag
+    // — those are the ones most likely to gate reporting behavior.
     const summary = types.map((t) => {
       const pick: Record<string, unknown> = {
         id: t.id,
         name: t.name,
         active: t.active,
+        noCharge: t.noCharge,
       };
       for (const k of Object.keys(t)) {
         const lk = k.toLowerCase();
+        const v = t[k];
         if (
           lk.includes('threshold') ||
           lk.includes('opportunity') ||
           lk.includes('sold') ||
-          lk.includes('soldhours')
+          lk.includes('convert') ||
+          lk.includes('charge') ||
+          typeof v === 'boolean'
         ) {
-          pick[k] = t[k];
+          pick[k] = v;
         }
       }
       return pick;
     });
 
+    const noChargeCount = types.filter((t) => t.noCharge === true).length;
+    const noChargeTypes = types
+      .filter((t) => t.noCharge === true)
+      .map((t) => ({ id: t.id, name: t.name, active: t.active }));
+
     return NextResponse.json({
       ok: true,
       count: types.length,
+      noChargeCount,
+      noChargeTypes,
       keysSeen: Array.from(allKeys).sort(),
       sampleFull: types[0] ?? null,
       summary,
