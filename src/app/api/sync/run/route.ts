@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { syncFinancial } from '@/lib/sync/servicetitan/financial';
 import { syncJobs } from '@/lib/sync/servicetitan/jobs';
+import { syncMemberships } from '@/lib/sync/servicetitan/memberships';
 import { trailingDays } from '@/lib/sync/window';
 
 export const dynamic = 'force-dynamic';
@@ -16,7 +17,7 @@ export const dynamic = 'force-dynamic';
 // Vercel Pro allows up to 800s on Node.js serverless functions.
 export const maxDuration = 800;
 
-const SOURCES = ['financial', 'jobs'] as const;
+const SOURCES = ['financial', 'jobs', 'memberships'] as const;
 type Source = (typeof SOURCES)[number];
 
 function authorized(req: NextRequest): boolean {
@@ -59,6 +60,12 @@ export async function POST(req: NextRequest) {
     if (source === 'jobs') {
       const result = await syncJobs(window, 'manual');
       return NextResponse.json({ ok: true, source, window, ...result });
+    }
+    if (source === 'memberships') {
+      // Memberships endpoint gives us a live snapshot — ignores the window
+      // and always writes today's row per tier.
+      const result = await syncMemberships('manual');
+      return NextResponse.json({ ok: true, source, ...result });
     }
     return NextResponse.json({ error: 'source not yet implemented' }, { status: 501 });
   } catch (err) {
