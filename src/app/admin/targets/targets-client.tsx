@@ -1,7 +1,8 @@
 'use client';
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { Plus, Pencil, Trash2, Save, X, Copy } from 'lucide-react';
+import { Plus, Pencil, Trash2, Save, X, Copy, ChevronDown } from 'lucide-react';
+import { cn } from '@/lib/cn';
 import { Panel } from '@/components/primitives/panel';
 import { SectionHead } from '@/components/primitives/section-head';
 import { Button } from '@/components/primitives/button';
@@ -95,11 +96,29 @@ export function TargetsClient() {
   const [showFullAdd, setShowFullAdd] = useState(false);
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const now = new Date();
+    return new Set([monthKey(now.getUTCFullYear(), now.getUTCMonth() + 1)]);
+  });
 
-  // Available years — union of years in data + current year.
+  const toggleExpanded = (key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const expandAll = (keys: string[]) => setExpanded(new Set(keys));
+  const collapseAll = () => setExpanded(new Set());
+
+  // Available years — always include 2024 → current+1 plus anything seen in
+  // the data. That way historical / future years are reachable even before
+  // the user has keyed in any targets for them.
   const availableYears = useMemo(() => {
+    const current = new Date().getUTCFullYear();
     const set = new Set<number>();
-    set.add(new Date().getUTCFullYear());
+    for (let y = 2024; y <= current + 1; y++) set.add(y);
     (data ?? []).forEach((r) => {
       set.add(Number(r.effectiveFrom.slice(0, 4)));
       set.add(Number(r.effectiveTo.slice(0, 4)));
@@ -107,7 +126,7 @@ export function TargetsClient() {
     return Array.from(set).sort((a, b) => b - a);
   }, [data]);
 
-  const activeYear = selectedYear ?? availableYears[0] ?? new Date().getUTCFullYear();
+  const activeYear = selectedYear ?? new Date().getUTCFullYear();
 
   // Split targets into the monthly-revenue view vs "other" (close_rate, etc.)
   const { monthlyRevByKeyByDept, otherTargets } = useMemo(() => {
@@ -251,19 +270,33 @@ export function TargetsClient() {
 
       {data && (
         <>
-          <div className="flex items-center gap-3 flex-wrap">
-            <YearTabs
-              years={availableYears}
-              active={activeYear}
-              onChange={setSelectedYear}
-            />
-            <span className="text-[11px] uppercase tracking-[0.08em] text-muted">
-              Company targets auto-sum from departments
-            </span>
+          <div className="flex items-center gap-3 flex-wrap justify-between">
+            <div className="flex items-center gap-3 flex-wrap">
+              <YearTabs
+                years={availableYears}
+                active={activeYear}
+                onChange={setSelectedYear}
+              />
+              <span className="text-[11px] uppercase tracking-[0.08em] text-muted">
+                Company total auto-sums from depts
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => expandAll(months.map((m) => m.key))}
+              >
+                Expand all
+              </Button>
+              <Button size="sm" variant="ghost" onClick={collapseAll}>
+                Collapse all
+              </Button>
+            </div>
           </div>
 
-          {/* Revenue — one Panel per month */}
-          <div className="flex flex-col gap-4">
+          {/* Revenue — one collapsible tile per month */}
+          <div className="flex flex-col gap-3">
             {months.map(({ year, month, key, label }) => {
               const deptRows = monthlyRevByKeyByDept.get(key) ?? new Map();
               const total = Array.from(deptRows.values()).reduce(
@@ -272,113 +305,151 @@ export function TargetsClient() {
               );
               const filled = deptRows.size;
               const prev = previousMonth(year, month);
-              const prevHasAny = (monthlyRevByKeyByDept.get(monthKey(prev.year, prev.month)) ?? new Map()).size > 0;
+              const prevHasAny =
+                (monthlyRevByKeyByDept.get(monthKey(prev.year, prev.month)) ?? new Map()).size > 0;
+              const isOpen = expanded.has(key);
 
               return (
-                <Panel
+                <div
                   key={key}
-                  eyebrow={`Company: ${fmtMoney(total)}  ·  ${filled}/${DEPT_CODES.length} filled`}
-                  title={label}
-                  padding="cozy"
-                  right={
-                    prevHasAny && filled < DEPT_CODES.length ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onCopyFromPrevious(year, month)}
-                        disabled={upsert.isPending}
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                        Copy from {MONTH_NAMES[prev.month - 1].slice(0, 3)} {prev.year}
-                      </Button>
-                    ) : null
-                  }
+                  className="bg-surface border border-border rounded-panel overflow-hidden"
                 >
-                  <ul className="flex flex-col divide-y divide-border/60">
-                    {DEPT_CODES.map((dept) => {
-                      const row = deptRows.get(dept.code);
-                      const isAdding =
-                        addingContext?.monthKey === key && addingContext?.dept === dept.code;
-                      const isEditing = row && editingId === row.id;
+                  {/* Collapsible header — the whole row toggles open/close */}
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(key)}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-4 md:px-5 py-3 text-left',
+                      'hover:bg-surface-2/30 transition-colors',
+                    )}
+                    aria-expanded={isOpen}
+                  >
+                    <ChevronDown
+                      className={cn(
+                        'h-4 w-4 text-muted transition-transform shrink-0',
+                        isOpen && 'rotate-180',
+                      )}
+                    />
+                    <span className="text-[14px] font-semibold min-w-0 flex-1 truncate">
+                      {label}
+                    </span>
+                    <span className="text-[12px] font-mono tabular-nums text-muted whitespace-nowrap">
+                      {filled}/{DEPT_CODES.length}
+                    </span>
+                    <span
+                      className={cn(
+                        'text-[13px] font-mono tabular-nums whitespace-nowrap min-w-[80px] text-right',
+                        filled > 0 ? 'text-text font-medium' : 'text-muted',
+                      )}
+                    >
+                      {fmtMoney(total)}
+                    </span>
+                  </button>
 
-                      return (
-                        <li key={dept.code} className="flex items-center gap-3 py-3">
-                          <span
-                            aria-hidden="true"
-                            className="h-2.5 w-2.5 rounded-full shrink-0"
-                            style={{ background: `var(--d-${dept.code})` }}
-                          />
-                          <span className="text-[13px] font-medium min-w-0 w-[180px] md:w-[220px]">
-                            {dept.name}
-                          </span>
+                  {isOpen && (
+                    <div className="border-t border-border/60 px-4 md:px-5 py-3">
+                      {prevHasAny && filled < DEPT_CODES.length && (
+                        <div className="flex justify-end mb-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onCopyFromPrevious(year, month)}
+                            disabled={upsert.isPending}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                            Copy from {MONTH_NAMES[prev.month - 1].slice(0, 3)} {prev.year}
+                          </Button>
+                        </div>
+                      )}
+                      <ul className="flex flex-col divide-y divide-border/60">
+                        {DEPT_CODES.map((dept) => {
+                          const row = deptRows.get(dept.code);
+                          const isAdding =
+                            addingContext?.monthKey === key && addingContext?.dept === dept.code;
+                          const isEditing = row && editingId === row.id;
 
-                          {isAdding || isEditing ? (
-                            <InlineRevenueValue
-                              initial={row?.targetValue}
-                              onSave={async (cents) => {
-                                await onSave({
-                                  metric: 'revenue',
-                                  scope: 'department',
-                                  scopeValue: dept.code,
-                                  effectiveFrom: firstOfMonth(year, month),
-                                  effectiveTo: lastOfMonth(year, month),
-                                  targetValue: cents,
-                                  unit: 'cents',
-                                });
-                              }}
-                              onCancel={() => {
-                                setEditingId(null);
-                                setAddingContext(null);
-                              }}
-                              busy={upsert.isPending}
-                            />
-                          ) : row ? (
-                            <>
-                              <span className="font-mono tabular-nums text-[14px] font-medium flex-1">
-                                {fmtMoney(row.targetValue)}
+                          return (
+                            <li key={dept.code} className="flex items-center gap-3 py-2.5">
+                              <span
+                                aria-hidden="true"
+                                className="h-2.5 w-2.5 rounded-full shrink-0"
+                                style={{ background: `var(--d-${dept.code})` }}
+                              />
+                              <span className="text-[13px] font-medium min-w-0 w-[150px] md:w-[200px]">
+                                {dept.name}
                               </span>
-                              <div className="inline-flex gap-1">
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => {
-                                    setEditingId(row.id);
+
+                              {isAdding || isEditing ? (
+                                <InlineRevenueValue
+                                  initial={row?.targetValue}
+                                  onSave={async (cents) => {
+                                    await onSave({
+                                      metric: 'revenue',
+                                      scope: 'department',
+                                      scopeValue: dept.code,
+                                      effectiveFrom: firstOfMonth(year, month),
+                                      effectiveTo: lastOfMonth(year, month),
+                                      targetValue: cents,
+                                      unit: 'cents',
+                                    });
+                                  }}
+                                  onCancel={() => {
+                                    setEditingId(null);
                                     setAddingContext(null);
                                   }}
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                  Edit
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="danger"
-                                  onClick={() => onDelete(row.id)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <span className="text-[13px] text-muted flex-1">— not set —</span>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  setAddingContext({ monthKey: key, dept: dept.code });
-                                  setEditingId(null);
-                                }}
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                                Add
-                              </Button>
-                            </>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </Panel>
+                                  busy={upsert.isPending}
+                                />
+                              ) : row ? (
+                                <>
+                                  <span className="font-mono tabular-nums text-[14px] font-medium flex-1">
+                                    {fmtMoney(row.targetValue)}
+                                  </span>
+                                  <div className="inline-flex gap-1">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => {
+                                        setEditingId(row.id);
+                                        setAddingContext(null);
+                                      }}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                      Edit
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="danger"
+                                      onClick={() => onDelete(row.id)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-[13px] text-muted flex-1">
+                                    — not set —
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => {
+                                      setAddingContext({ monthKey: key, dept: dept.code });
+                                      setEditingId(null);
+                                    }}
+                                  >
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Add
+                                  </Button>
+                                </>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
