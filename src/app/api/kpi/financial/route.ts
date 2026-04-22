@@ -11,7 +11,6 @@ import { db } from '@/db/client';
 import {
   departments,
   financialDaily,
-  technicianDaily,
   membershipDaily,
   targets,
 } from '@/db/schema';
@@ -41,19 +40,25 @@ async function financialAggregate(window: Window) {
   return rows;
 }
 
-async function technicianKpiAggregate(window: Window) {
+/**
+ * KPI strip aggregate — revenue / jobs / opportunities summed from
+ * financial_daily (invoices sync writes revenue; jobs sync writes
+ * jobs + opps). Replaces the earlier technician_daily-backed read,
+ * which was still showing seeded data.
+ */
+async function financialKpiAggregate(window: Window) {
   const database = db();
   const rows = await database
     .select({
-      totalRevenueCents: sql<number>`COALESCE(SUM(${technicianDaily.revenueCents}), 0)`,
-      totalJobs: sql<number>`COALESCE(SUM(${technicianDaily.jobsCompleted}), 0)`,
-      totalOpps: sql<number>`COALESCE(SUM(${technicianDaily.opportunities}), 0)`,
+      totalRevenueCents: sql<number>`COALESCE(SUM(${financialDaily.totalRevenueCents}), 0)`,
+      totalJobs: sql<number>`COALESCE(SUM(${financialDaily.jobs}), 0)`,
+      totalOpps: sql<number>`COALESCE(SUM(${financialDaily.opportunities}), 0)`,
     })
-    .from(technicianDaily)
+    .from(financialDaily)
     .where(
       and(
-        gte(technicianDaily.reportDate, window.from),
-        lte(technicianDaily.reportDate, window.to),
+        gte(financialDaily.reportDate, window.from),
+        lte(financialDaily.reportDate, window.to),
       ),
     );
   return rows[0] ?? { totalRevenueCents: 0, totalJobs: 0, totalOpps: 0 };
@@ -107,7 +112,7 @@ export async function GET(req: NextRequest) {
     financialAggregate(period.cur),
     financialAggregate(period.ly),
     financialAggregate(period.ly2),
-    technicianKpiAggregate(period.cur),
+    financialKpiAggregate(period.cur),
     membershipActiveAsOf(period.cur.to),
   ]);
 
@@ -256,8 +261,8 @@ export async function GET(req: NextRequest) {
   const avgTicketCents = teamJobs > 0 ? Math.round(teamRev / teamJobs) : 0;
 
   // Pull LY equivalents for KPIs
-  const teamLy = await technicianKpiAggregate(period.ly);
-  const teamLy2 = await technicianKpiAggregate(period.ly2);
+  const teamLy = await financialKpiAggregate(period.ly);
+  const teamLy2 = await financialKpiAggregate(period.ly2);
   const lyCloseBps =
     Number(teamLy.totalOpps) > 0 ? Math.round((Number(teamLy.totalJobs) / Number(teamLy.totalOpps)) * 10000) : 0;
   const ly2CloseBps =

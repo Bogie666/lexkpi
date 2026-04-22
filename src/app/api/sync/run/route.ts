@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { syncFinancial } from '@/lib/sync/servicetitan/financial';
+import { syncJobs } from '@/lib/sync/servicetitan/jobs';
 import { trailingDays } from '@/lib/sync/window';
 
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic';
 // Vercel Pro allows up to 800s on Node.js serverless functions.
 export const maxDuration = 800;
 
-const SOURCES = ['financial'] as const;
+const SOURCES = ['financial', 'jobs'] as const;
 type Source = (typeof SOURCES)[number];
 
 function authorized(req: NextRequest): boolean {
@@ -55,7 +56,10 @@ export async function POST(req: NextRequest) {
       const result = await syncFinancial(window, 'manual');
       return NextResponse.json({ ok: true, source, window, ...result });
     }
-    // Future sources land here.
+    if (source === 'jobs') {
+      const result = await syncJobs(window, 'manual');
+      return NextResponse.json({ ok: true, source, window, ...result });
+    }
     return NextResponse.json({ error: 'source not yet implemented' }, { status: 501 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
