@@ -44,6 +44,14 @@ export interface JobsSyncResult {
   rowsUpserted: number;
   jobsDropped: number;
   unmappedBusinessUnitIds: number[];
+  // Window-wide roll-ups so we can compare directly to ST's report without
+  // having to query the dashboard API after each sync.
+  totals?: {
+    jobs: number;
+    opportunities: number;
+    closedOpportunities: number;
+    closeRatePct: number; // rounded to 2dp
+  };
 }
 
 interface StJob {
@@ -61,13 +69,23 @@ interface StJob {
 interface StJobType {
   id: number;
   soldThreshold?: number | null;
+  noCharge?: boolean;
+}
+
+interface JobTypeSettings {
+  thresholdCents: number;
+  noCharge: boolean;
 }
 
 /**
- * Fallback threshold (cents) for jobs whose jobTypeId isn't in the types
- * map — e.g. archived types. Set low so we don't silently drop real opps.
+ * Fallback settings for jobs whose jobTypeId isn't in the types map —
+ * e.g. archived types. Threshold set low so we don't silently drop real
+ * opps; noCharge defaults to false.
  */
-const FALLBACK_THRESHOLD_CENTS = 1 * 100;
+const FALLBACK_SETTINGS: JobTypeSettings = {
+  thresholdCents: 1 * 100,
+  noCharge: false,
+};
 
 function jobTotalCents(j: StJob): number {
   const raw = j.total;
@@ -82,9 +100,18 @@ function dateOf(j: StJob): string | null {
   return j.completedOn.slice(0, 10);
 }
 
-function thresholdCents(j: StJob, map: Map<number, number>): number {
-  if (!j.jobTypeId) return FALLBACK_THRESHOLD_CENTS;
-  return map.get(j.jobTypeId) ?? FALLBACK_THRESHOLD_CENTS;
+function jobTypeSettings(j: StJob, map: Map<number, JobTypeSettings>): JobTypeSettings {
+  if (!j.jobTypeId) return FALLBACK_SETTINGS;
+  return map.get(j.jobTypeId) ?? FALLBACK_SETTINGS;
+}
+
+/**
+ * "No-Charge / Non-Opportunity" per ST: TRUE if the job itself is flagged
+ * no-charge OR its JobType is flagged no-charge. Either surface marks the
+ * job as a non-opp candidate (subject to the threshold override below).
+ */
+function isNoChargeEffective(j: StJob, settings: JobTypeSettings): boolean {
+  return Boolean(j.noCharge) || settings.noCharge;
 }
 
 /**
@@ -100,29 +127,34 @@ function thresholdCents(j: StJob, map: Map<number, number>): number {
  * (ST exposes the rolled-up total on the job record). When we later wire
  * the Estimates sync, swap in the precise value from the sold estimate.
  */
-function isOpportunity(j: StJob, thresholds: Map<number, number>): boolean {
-  if (!j.noCharge) return true;
-  return jobTotalCents(j) >= thresholdCents(j, thresholds);
+function isOpportunity(j: StJob, typeMap: Map<number, JobTypeSettings>): boolean {
+  const s = jobTypeSettings(j, typeMap);
+  if (!isNoChargeEffective(j, s)) return true;
+  return jobTotalCents(j) >= s.thresholdCents;
 }
 
 /**
  * Closed Opportunity: a completed job whose sold-estimate subtotal is
  * ≥ the job type's sold threshold. Approximated with the job's `total`.
  */
-function isClosedOpportunity(j: StJob, thresholds: Map<number, number>): boolean {
-  return jobTotalCents(j) >= thresholdCents(j, thresholds);
+function isClosedOpportunity(j: StJob, typeMap: Map<number, JobTypeSettings>): boolean {
+  const s = jobTypeSettings(j, typeMap);
+  return jobTotalCents(j) >= s.thresholdCents;
 }
 
-async function loadJobTypeThresholds(): Promise<Map<number, number>> {
+async function loadJobTypeSettings(): Promise<Map<number, JobTypeSettings>> {
   const types = await collectResource<StJobType>({
     path: '/jpm/v2/tenant/{tenant}/job-types',
     query: {},
   });
-  const m = new Map<number, number>();
+  const m = new Map<number, JobTypeSettings>();
   for (const t of types) {
     const dollars = t.soldThreshold;
-    if (typeof dollars !== 'number' || !Number.isFinite(dollars)) continue;
-    m.set(t.id, Math.round(dollars * 100));
+    const threshold =
+      typeof dollars === 'number' && Number.isFinite(dollars)
+        ? Math.round(dollars * 100)
+        : FALLBACK_SETTINGS.thresholdCents;
+    m.set(t.id, { thresholdCents: threshold, noCharge: Boolean(t.noCharge) });
   }
   return m;
 }
@@ -178,9 +210,9 @@ export async function syncJobs(
   let dropped = 0;
 
   try {
-    const [buToDept, jobTypeThresholds] = await Promise.all([
+    const [buToDept, jobTypeMap] = await Promise.all([
       loadBuToDeptMap(),
-      loadJobTypeThresholds(),
+      loadJobTypeSettings(),
     ]);
 
     // Pull all completed jobs in the window.
@@ -224,8 +256,8 @@ export async function syncJobs(
       if (!agg.has(key)) agg.set(key, { dept, date, jobs: 0, opps: 0, closedOpps: 0 });
       const entry = agg.get(key)!;
       entry.jobs += 1;
-      if (isOpportunity(j, jobTypeThresholds)) entry.opps += 1;
-      if (isClosedOpportunity(j, jobTypeThresholds)) entry.closedOpps += 1;
+      if (isOpportunity(j, jobTypeMap)) entry.opps += 1;
+      if (isClosedOpportunity(j, jobTypeMap)) entry.closedOpps += 1;
     }
 
     const rows = Array.from(agg.values()).map((r) => ({
@@ -267,12 +299,23 @@ export async function syncJobs(
       rowsUpserted: upserted,
     });
 
+    const totalJobs = Array.from(agg.values()).reduce((s, r) => s + r.jobs, 0);
+    const totalOpps = Array.from(agg.values()).reduce((s, r) => s + r.opps, 0);
+    const totalClosed = Array.from(agg.values()).reduce((s, r) => s + r.closedOpps, 0);
+    const closeRatePct = totalOpps > 0 ? Math.round((totalClosed / totalOpps) * 10000) / 100 : 0;
+
     return {
       runId,
       jobsFetched: fetched,
       rowsUpserted: upserted,
       jobsDropped: dropped,
       unmappedBusinessUnitIds: Array.from(unmapped).slice(0, 40),
+      totals: {
+        jobs: totalJobs,
+        opportunities: totalOpps,
+        closedOpportunities: totalClosed,
+        closeRatePct,
+      },
     };
   } catch (err) {
     const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
