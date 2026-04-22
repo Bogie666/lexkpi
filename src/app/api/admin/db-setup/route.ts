@@ -56,6 +56,49 @@ async function runSchema(): Promise<{ tablesEnsured: string[] }> {
   return { tablesEnsured: ['business_units'] };
 }
 
+/**
+ * One-shot migration to promote ETX from "dropped" to a real dashboard
+ * department. Inserts the etx dept row (idempotent) and flips the 5 ETX
+ * business units from department_code=NULL to 'etx'. Safe to re-run.
+ */
+async function addEtx(): Promise<{
+  departmentUpserted: number;
+  businessUnitsUpdated: number;
+}> {
+  const url =
+    process.env.DATABASE_URL_UNPOOLED ??
+    process.env.POSTGRES_URL_NON_POOLING ??
+    process.env.DATABASE_URL ??
+    process.env.POSTGRES_URL;
+  if (!url) throw new Error('DATABASE_URL not set');
+  const sql = neon(url);
+
+  const deptRows = await sql`
+    INSERT INTO departments (code, name, color_token, sort_order, active)
+    VALUES ('etx', 'ETX', '--d-etx', 70, true)
+    ON CONFLICT (code) DO UPDATE SET
+      name         = excluded.name,
+      color_token  = excluded.color_token,
+      sort_order   = excluded.sort_order,
+      active       = excluded.active,
+      updated_at   = now()
+    RETURNING id
+  `;
+
+  const buRows = await sql`
+    UPDATE business_units
+    SET department_code = 'etx',
+        updated_at      = now()
+    WHERE id IN (154681094, 154681497, 154684495, 154687321, 154691820)
+    RETURNING id
+  `;
+
+  return {
+    departmentUpserted: deptRows.length,
+    businessUnitsUpdated: buRows.length,
+  };
+}
+
 async function runSeed() {
   // The seed script uses top-level await for dotenv etc.; we can't import
   // it directly as a module in a route without side-effects. Safer: inline
@@ -74,6 +117,9 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   try {
     if (mode === 'schema' || mode === 'migrate' || mode === 'schema-and-seed' || mode === 'migrate-and-seed') {
       out.schema = await runSchema();
+    }
+    if (mode === 'add-etx') {
+      out.etx = await addEtx();
     }
     if (mode === 'seed' || mode === 'schema-and-seed' || mode === 'migrate-and-seed') {
       out.seed = await runSeed();

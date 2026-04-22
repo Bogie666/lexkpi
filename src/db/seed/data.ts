@@ -93,6 +93,18 @@ export const DEPARTMENTS: DeptSeed[] = [
     opportunities: 224,
     monthlyTargetDollars: 40_000,
   },
+  {
+    code: 'etx',
+    name: 'ETX',
+    colorToken: '--d-etx',
+    sortOrder: 70,
+    revenue: { cur: 82_000, ly: 68_000, ly2: 54_000 },
+    spark: [4, 5, 3, 6, 5, 4, 6, 7, 5, 6, 8, 6, 7, 9, 7, 8, 10, 8, 9, 11],
+    lySpark: [3, 4, 3, 5, 4, 3, 5, 6, 4, 5, 6, 5, 6, 7, 6, 7, 8, 7, 7, 9],
+    jobs: 28,
+    opportunities: 52,
+    monthlyTargetDollars: 136_000,
+  },
 ];
 
 // ─── Technician roles ───────────────────────────────────────────────────────
@@ -251,11 +263,13 @@ export const BUSINESS_UNITS: BusinessUnitSeed[] = [
   { id: 455,       name: 'Electrical Maintenance',             departmentCode: 'electrical' },
   { id: 161649734, name: 'Electrical Service',                 departmentCode: 'electrical' },
 
+  // ── ETX (East Texas) ────────────────────────────────────────────────────
+  { id: 154681094, name: 'ETX Install - Ducts & Insulation',   departmentCode: 'etx' },
+  { id: 154681497, name: 'ETX Maintenance',                    departmentCode: 'etx' },
+  { id: 154684495, name: 'ETX Service',                        departmentCode: 'etx' },
+  { id: 154687321, name: 'ETX Install - Equipment',            departmentCode: 'etx' },
+  { id: 154691820, name: 'ETX Sales',                          departmentCode: 'etx' },
+
   // ── Explicitly dropped ──────────────────────────────────────────────────
-  { id: 154681094, name: 'ETX Install - Ducts & Insulation',   departmentCode: null },
-  { id: 154681497, name: 'ETX Maintenance',                    departmentCode: null },
-  { id: 154684495, name: 'ETX Service',                        departmentCode: null },
-  { id: 154687321, name: 'ETX Install - Equipment',            departmentCode: null },
-  { id: 154691820, name: 'ETX Sales',                          departmentCode: null },
   { id: 10194265,  name: 'Service Star',                       departmentCode: null },
 ];

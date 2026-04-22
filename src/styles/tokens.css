@@ -18,7 +18,7 @@
   --down:      oklch(0.70 0.18 25);
   --warning:   oklch(0.80 0.16 85);
 
-  /* Department swatches — one per dashboard department (6 total).
+  /* Department swatches — one per dashboard department.
      Names mirror the department `code` strings so `var(--d-${code})` resolves. */
   --d-hvac_service:      oklch(0.72 0.14 220);   /* sky/blue — front-line service */
   --d-hvac_sales:        oklch(0.66 0.16 260);   /* violet — install / equipment */
@@ -26,6 +26,7 @@
   --d-plumbing:          oklch(0.68 0.14 185);   /* teal */
   --d-commercial:        oklch(0.66 0.16 295);   /* purple */
   --d-electrical:        oklch(0.72 0.15 85);    /* yellow-green */
+  --d-etx:               oklch(0.70 0.13 160);   /* emerald — East Texas */
 
   /* Legacy aliases — still resolves for any lingering 'hvac' / 'maintenance' code. */
   --d-hvac:              var(--d-hvac_service);
