@@ -201,14 +201,31 @@ export async function GET(req: NextRequest) {
   const lyCum = cumulative(dailyLy, lyDays);
   const ly2Cum = cumulative(dailyLy2, ly2Days);
 
-  // Linear target growth across the window
-  const trend = trendDays.map((d, i) => ({
-    date: d,
-    actual: curCum[i] ?? 0,
-    ly: lyCum[i],
-    ly2: ly2Cum[i],
-    target: Math.round(companyTarget * ((i + 1) / trendDays.length)),
-  }));
+  // Target row (company-wide) also tells us the target's effective window.
+  // We prorate across THAT window (usually a full calendar month), not the
+  // trend window — otherwise a MTD view makes the target line hit the full
+  // monthly goal at day 20, which overstates pace.
+  const companyTargetRow = companyTargets[0];
+  const targetEffFrom = companyTargetRow?.effectiveFrom ?? period.cur.from;
+  const targetEffTo = companyTargetRow?.effectiveTo ?? period.cur.to;
+  const targetTotalDays = Math.max(
+    1,
+    daysInWindow({ from: targetEffFrom, to: targetEffTo }).length,
+  );
+
+  const trend = trendDays.map((d, i) => {
+    // day-of-target-window = how many days into the target's effective range
+    // this trend point falls (clamped to [0, N]).
+    const dayIdx = daysInWindow({ from: targetEffFrom, to: d }).length;
+    const dayOfTarget = Math.min(Math.max(dayIdx, 0), targetTotalDays);
+    return {
+      date: d,
+      actual: curCum[i] ?? 0,
+      ly: lyCum[i],
+      ly2: ly2Cum[i],
+      target: Math.round((companyTarget / targetTotalDays) * dayOfTarget),
+    };
+  });
 
   const totalCur = curCum[curCum.length - 1] ?? 0;
   const totalLy = lyCum[lyCum.length - 1];
