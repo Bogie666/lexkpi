@@ -303,16 +303,17 @@ export async function runSeed(log: (msg: string) => void = console.log): Promise
       notes: 'April 2026 monthly target (seed)',
     })),
   );
-  const totalCompanyTarget = DEPARTMENTS.reduce((s, d) => s + d.monthlyTargetDollars, 0);
+  // Company-wide April target — set explicitly by the team, not derived from
+  // the per-dept sum. Leave this as the source of truth when reseeding.
   await db.insert(schema.targets).values({
     metric: 'revenue',
     scope: 'company',
     scopeValue: null,
     effectiveFrom: '2026-04-01',
     effectiveTo: '2026-04-30',
-    targetValue: DOLLAR(totalCompanyTarget),
+    targetValue: DOLLAR(2_180_000),
     unit: 'cents',
-    notes: 'April 2026 company revenue target (seed)',
+    notes: 'April 2026 company revenue target',
   });
 
   log('• Seeding estimate_analysis…');
