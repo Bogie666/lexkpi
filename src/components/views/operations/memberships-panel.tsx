@@ -189,7 +189,7 @@ export function MembershipsPanel({ data, compareMode }: MembershipsPanelProps) {
                 />
                 <span className="text-[13px] font-medium">{t.tier}</span>
                 <span className="text-[12px] text-muted font-mono tabular-nums">
-                  ${t.price}/mo
+                  {t.price > 0 ? `$${t.price}/mo` : '—'}
                 </span>
                 <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
                   <div

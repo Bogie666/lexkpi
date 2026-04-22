@@ -98,16 +98,34 @@ export async function GET(req: NextRequest) {
   const history = monthKeysBefore(period.cur.to, 12).map((k) => byMonth.get(k) ?? 0);
   const lyHistory = monthKeysBefore(period.ly.to, 12).map((k) => byMonth.get(k) ?? 0);
 
-  const curByTier = new Map(curSnap.map((r) => [r.name, r.active]));
   const lyByTier = new Map(lySnap.map((r) => [r.name, r.active]));
 
-  const breakdown = tiers.map((t) => ({
-    tier: t.name,
-    count: curByTier.get(t.name) ?? 0,
-    lyCount: lyByTier.get(t.name),
-    price: Math.round(t.priceCents / 100),
-    colorToken: t.colorToken,
-  }));
+  // Lookup price / color by exact tier-name match against the
+  // membership_tiers dimension table (which is still seed). Real ST type
+  // names won't match, so falls back to 0 / rotating color palette.
+  const tierMeta = new Map(tiers.map((t) => [t.name, t]));
+  const FALLBACK_COLORS = [
+    '--d-hvac_service',
+    '--d-hvac_sales',
+    '--d-hvac_maintenance',
+    '--d-plumbing',
+    '--d-commercial',
+    '--d-electrical',
+    '--d-etx',
+  ];
+  const breakdown = curSnap
+    .slice()
+    .sort((a, b) => b.active - a.active)
+    .map((snap, i) => {
+      const meta = tierMeta.get(snap.name);
+      return {
+        tier: snap.name,
+        count: snap.active,
+        lyCount: lyByTier.get(snap.name),
+        price: meta ? Math.round(meta.priceCents / 100) : 0,
+        colorToken: meta?.colorToken ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+      };
+    });
 
   const body: MembershipsResponse = {
     active,
