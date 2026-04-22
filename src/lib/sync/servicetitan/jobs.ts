@@ -14,10 +14,18 @@
  *     ST's "Completed Jobs" metric spreads a job across every BU touched
  *     by its invoice items. Multi-BU jobs are rare; we can refine later
  *     if the delta matters.
- *   - We count opportunity as: status=Completed AND !noCharge AND
- *     !recallForId AND !warrantyId. ST's definition additionally allows
- *     no-charge jobs whose invoice subtotal ≥ a "sold threshold" — we
- *     skip that edge case for MVP.
+ *
+ * Opportunity / Closed-Opp logic follows ST's written rule:
+ *   - Opportunity: completed job AND NOT effectively-no-charge, OR
+ *     no-charge with a sold estimate whose subtotal ≥ the jobType's
+ *     soldThreshold.
+ *   - Closed: a completed job with a sold estimate whose subtotal ≥
+ *     the jobType's soldThreshold.
+ *
+ * "Effectively no-charge" = job.noCharge === true OR
+ * jobType.noCharge === true. Sold-estimate subtotals come from the
+ * Estimates endpoint with a 180-day lookback so long-lead installs
+ * aren't missed.
  */
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
@@ -51,6 +59,7 @@ export interface JobsSyncResult {
     opportunities: number;
     closedOpportunities: number;
     closeRatePct: number; // rounded to 2dp
+    soldEstimatesMatched: number; // jobs in window with a sold-estimate lookup hit
   };
 }
 
@@ -61,9 +70,6 @@ interface StJob {
   businessUnitId?: number | null;
   jobTypeId?: number | null;
   noCharge?: boolean;
-  recallForId?: number | null;
-  warrantyId?: number | null;
-  total?: number | string | null;
 }
 
 interface StJobType {
@@ -72,9 +78,73 @@ interface StJobType {
   noCharge?: boolean;
 }
 
+interface StEstimate {
+  id: number;
+  jobId?: number | null;
+  status?: { value?: string } | string | null;
+  soldOn?: string | null;
+  subtotal?: number | string | null;
+}
+
 interface JobTypeSettings {
   thresholdCents: number;
   noCharge: boolean;
+}
+
+/**
+ * How far back to look for sold estimates when computing closed-opp gating.
+ * Most estimates are sold within ~30 days of job completion, but
+ * long-lead installs can span months. 180 days is comfortably safe.
+ */
+const ESTIMATE_LOOKBACK_DAYS = 180;
+
+function shiftDate(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function estimateSubtotalCents(e: StEstimate): number {
+  const raw = e.subtotal;
+  if (raw === null || raw === undefined) return 0;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100);
+}
+
+function estimateStatus(e: StEstimate): string {
+  if (!e.status) return '';
+  if (typeof e.status === 'string') return e.status;
+  return e.status.value ?? '';
+}
+
+/**
+ * Pull every sold estimate in a window around the jobs window, then build
+ * a map of jobId → max sold-estimate subtotal (cents). Jobs missing from
+ * the map have never had a sold estimate above the lookback window.
+ */
+async function loadSoldEstimateSubtotals(
+  window: SyncWindow,
+): Promise<Map<number, number>> {
+  const soldAfter = `${shiftDate(window.from, -ESTIMATE_LOOKBACK_DAYS)}T00:00:00Z`;
+  const soldBefore = `${window.to}T23:59:59Z`;
+  const estimates = await collectResource<StEstimate>({
+    path: '/sales/v2/tenant/{tenant}/estimates',
+    query: {
+      status: 'Sold',
+      soldAfter,
+      soldBefore,
+    },
+  });
+  const map = new Map<number, number>();
+  for (const e of estimates) {
+    if (estimateStatus(e).toLowerCase() !== 'sold') continue;
+    if (!e.jobId) continue;
+    const cents = estimateSubtotalCents(e);
+    const prior = map.get(e.jobId) ?? 0;
+    if (cents > prior) map.set(e.jobId, cents);
+  }
+  return map;
 }
 
 /**
@@ -86,14 +156,6 @@ const FALLBACK_SETTINGS: JobTypeSettings = {
   thresholdCents: 1 * 100,
   noCharge: false,
 };
-
-function jobTotalCents(j: StJob): number {
-  const raw = j.total;
-  if (raw === null || raw === undefined) return 0;
-  const n = typeof raw === 'number' ? raw : Number(raw);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n * 100);
-}
 
 function dateOf(j: StJob): string | null {
   if (!j.completedOn) return null;
@@ -114,6 +176,10 @@ function isNoChargeEffective(j: StJob, settings: JobTypeSettings): boolean {
   return Boolean(j.noCharge) || settings.noCharge;
 }
 
+function soldSubtotalForJob(j: StJob, soldByJob: Map<number, number>): number {
+  return soldByJob.get(j.id) ?? 0;
+}
+
 /**
  * ST's "Sales Opportunity" rule (per the team-provided definition):
  *
@@ -122,24 +188,29 @@ function isNoChargeEffective(j: StJob, settings: JobTypeSettings): boolean {
  *   opportunity if it has a sold estimate with subtotal ≥ the sales
  *   threshold set on the job's JobType. Warranty and recall status do
  *   NOT exclude a job from being a sales opportunity.
- *
- * We approximate "sold estimate subtotal" using the job's `total` field
- * (ST exposes the rolled-up total on the job record). When we later wire
- * the Estimates sync, swap in the precise value from the sold estimate.
  */
-function isOpportunity(j: StJob, typeMap: Map<number, JobTypeSettings>): boolean {
+function isOpportunity(
+  j: StJob,
+  typeMap: Map<number, JobTypeSettings>,
+  soldByJob: Map<number, number>,
+): boolean {
   const s = jobTypeSettings(j, typeMap);
   if (!isNoChargeEffective(j, s)) return true;
-  return jobTotalCents(j) >= s.thresholdCents;
+  return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
 }
 
 /**
- * Closed Opportunity: a completed job whose sold-estimate subtotal is
- * ≥ the job type's sold threshold. Approximated with the job's `total`.
+ * Closed Opportunity: a completed job whose max sold-estimate subtotal
+ * is ≥ the job type's sold threshold. Jobs with no sold estimate never
+ * qualify, even if their invoice total happens to exceed the threshold.
  */
-function isClosedOpportunity(j: StJob, typeMap: Map<number, JobTypeSettings>): boolean {
+function isClosedOpportunity(
+  j: StJob,
+  typeMap: Map<number, JobTypeSettings>,
+  soldByJob: Map<number, number>,
+): boolean {
   const s = jobTypeSettings(j, typeMap);
-  return jobTotalCents(j) >= s.thresholdCents;
+  return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
 }
 
 async function loadJobTypeSettings(): Promise<Map<number, JobTypeSettings>> {
@@ -210,9 +281,10 @@ export async function syncJobs(
   let dropped = 0;
 
   try {
-    const [buToDept, jobTypeMap] = await Promise.all([
+    const [buToDept, jobTypeMap, soldByJob] = await Promise.all([
       loadBuToDeptMap(),
       loadJobTypeSettings(),
+      loadSoldEstimateSubtotals(window),
     ]);
 
     // Pull all completed jobs in the window.
@@ -256,8 +328,8 @@ export async function syncJobs(
       if (!agg.has(key)) agg.set(key, { dept, date, jobs: 0, opps: 0, closedOpps: 0 });
       const entry = agg.get(key)!;
       entry.jobs += 1;
-      if (isOpportunity(j, jobTypeMap)) entry.opps += 1;
-      if (isClosedOpportunity(j, jobTypeMap)) entry.closedOpps += 1;
+      if (isOpportunity(j, jobTypeMap, soldByJob)) entry.opps += 1;
+      if (isClosedOpportunity(j, jobTypeMap, soldByJob)) entry.closedOpps += 1;
     }
 
     const rows = Array.from(agg.values()).map((r) => ({
@@ -303,6 +375,8 @@ export async function syncJobs(
     const totalOpps = Array.from(agg.values()).reduce((s, r) => s + r.opps, 0);
     const totalClosed = Array.from(agg.values()).reduce((s, r) => s + r.closedOpps, 0);
     const closeRatePct = totalOpps > 0 ? Math.round((totalClosed / totalOpps) * 10000) / 100 : 0;
+    let soldMatched = 0;
+    for (const j of jobs) if (soldByJob.has(j.id)) soldMatched++;
 
     return {
       runId,
@@ -315,6 +389,7 @@ export async function syncJobs(
         opportunities: totalOpps,
         closedOpportunities: totalClosed,
         closeRatePct,
+        soldEstimatesMatched: soldMatched,
       },
     };
   } catch (err) {
