@@ -1,7 +1,6 @@
 'use client';
 
 import { Panel } from '@/components/primitives/panel';
-import { DeltaPill } from '@/components/primitives/delta-pill';
 import { ComparePill } from '@/components/primitives/compare-pill';
 import { Sparkline } from '@/components/charts/sparkline';
 import { fmtMoney } from '@/lib/format/money';
@@ -38,7 +37,7 @@ export function DepartmentTable({ data, compareMode }: DepartmentTableProps) {
                 <th className="py-2 pr-4 font-normal text-right hidden lg:table-cell">% to Goal</th>
               )}
               <th className="py-2 pr-4 font-normal text-right">
-                {compareOn ? `Δ vs ${compareLabel}` : 'vs Last'}
+                {compareOn ? `Δ vs ${compareLabel}` : 'vs Target'}
               </th>
               <th className="py-2 pr-2 font-normal text-right hidden lg:table-cell">Trend</th>
             </tr>
@@ -102,13 +101,16 @@ export function DepartmentTable({ data, compareMode }: DepartmentTableProps) {
                           baseline={compareKey}
                           size="sm"
                         />
-                      ) : (
-                        <DeltaPill
+                      ) : d.target > 0 ? (
+                        <ComparePill
                           current={d.revenue.value}
-                          previous={d.revenue.prev}
-                          format="money"
+                          comparison={d.target}
+                          unit="cents"
+                          baseline="prev"
                           size="sm"
                         />
+                      ) : (
+                        <span className="text-[12px] text-muted">—</span>
                       )}
                     </div>
                   </td>
