@@ -98,34 +98,52 @@ export async function GET(req: NextRequest) {
   const history = monthKeysBefore(period.cur.to, 12).map((k) => byMonth.get(k) ?? 0);
   const lyHistory = monthKeysBefore(period.ly.to, 12).map((k) => byMonth.get(k) ?? 0);
 
-  const lyByTier = new Map(lySnap.map((r) => [r.name, r.active]));
+  // Bucket raw ST type names into the dashboard's 5 categories. Keeps the UI
+  // usable when ST has ~14 granular types (Lex/Lyons/ETX × 1/2-3/4-5/6+).
+  // Pricing from lexairconditioning.com/cool-club. Complimentary is free.
+  const BUCKETS = [
+    { key: '1 System',       color: '--d-hvac_service',     price: 14 },
+    { key: '2-3 Systems',    color: '--d-hvac_sales',       price: 24 },
+    { key: '4-5 Systems',    color: '--d-plumbing',         price: 44 },
+    { key: '6+ Systems',     color: '--d-commercial',       price: 64 },
+    { key: 'Complimentary',  color: '--d-hvac_maintenance', price: 0  },
+    { key: 'Other',          color: '--d-electrical',       price: 0  },
+  ] as const;
+  type BucketKey = (typeof BUCKETS)[number]['key'];
 
-  // Lookup price / color by exact tier-name match against the
-  // membership_tiers dimension table (which is still seed). Real ST type
-  // names won't match, so falls back to 0 / rotating color palette.
-  const tierMeta = new Map(tiers.map((t) => [t.name, t]));
-  const FALLBACK_COLORS = [
-    '--d-hvac_service',
-    '--d-hvac_sales',
-    '--d-hvac_maintenance',
-    '--d-plumbing',
-    '--d-commercial',
-    '--d-electrical',
-    '--d-etx',
-  ];
-  const breakdown = curSnap
-    .slice()
-    .sort((a, b) => b.active - a.active)
-    .map((snap, i) => {
-      const meta = tierMeta.get(snap.name);
-      return {
-        tier: snap.name,
-        count: snap.active,
-        lyCount: lyByTier.get(snap.name),
-        price: meta ? Math.round(meta.priceCents / 100) : 0,
-        colorToken: meta?.colorToken ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length],
-      };
-    });
+  function bucketOf(rawName: string): BucketKey {
+    const n = rawName.toLowerCase();
+    if (n.includes('complimentary') || n.includes('free')) return 'Complimentary';
+    if (/\b1\s*system\b/.test(n)) return '1 System';
+    if (/\b2[-–]3\s*systems?\b/.test(n)) return '2-3 Systems';
+    if (/\b4[-–]5\s*systems?\b/.test(n)) return '4-5 Systems';
+    if (/\b6\+?\s*systems?\b/.test(n)) return '6+ Systems';
+    return 'Other';
+  }
+
+  const perBucketCur = new Map<BucketKey, number>();
+  const perBucketLy = new Map<BucketKey, number>();
+  for (const snap of curSnap) {
+    const k = bucketOf(snap.name);
+    perBucketCur.set(k, (perBucketCur.get(k) ?? 0) + snap.active);
+  }
+  for (const snap of lySnap) {
+    const k = bucketOf(snap.name);
+    perBucketLy.set(k, (perBucketLy.get(k) ?? 0) + snap.active);
+  }
+
+  const breakdown = BUCKETS
+    .map(({ key, color, price }) => ({
+      tier: key,
+      count: perBucketCur.get(key) ?? 0,
+      lyCount: perBucketLy.has(key) ? perBucketLy.get(key) : undefined,
+      price,
+      colorToken: color,
+    }))
+    // Hide buckets with no members to keep the panel clean.
+    .filter((row) => row.count > 0);
+  // Suppress unused — the dimension table is kept for future price lookup.
+  void tiers;
 
   const body: MembershipsResponse = {
     active,
