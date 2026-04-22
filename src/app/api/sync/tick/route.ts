@@ -13,6 +13,9 @@ import { syncRuns } from '@/db/schema';
 import { syncFinancial, FINANCIAL_SOURCE } from '@/lib/sync/servicetitan/financial';
 import { trailingDays } from '@/lib/sync/window';
 
+// Silence the unused eq import when we remove the success filter below.
+void eq;
+
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -38,15 +41,21 @@ function authorized(req: NextRequest): boolean {
   return bearer === secret;
 }
 
-async function lastSuccessAt(source: string): Promise<Date | null> {
+/**
+ * Most recent run *of any status* for this source. Using any status (not just
+ * success) prevents a cron-retry storm when syncs are failing: if the last
+ * error is only 5 minutes old and min_interval is 30, we skip. The sync gets
+ * a fresh try once the interval elapses.
+ */
+async function lastAttemptAt(source: string): Promise<Date | null> {
   const database = db();
   const rows = await database
-    .select({ finishedAt: syncRuns.finishedAt })
+    .select({ startedAt: syncRuns.startedAt })
     .from(syncRuns)
-    .where(and(eq(syncRuns.source, source), eq(syncRuns.status, 'success')))
-    .orderBy(desc(syncRuns.finishedAt))
+    .where(and(eq(syncRuns.source, source)))
+    .orderBy(desc(syncRuns.startedAt))
     .limit(1);
-  return rows[0]?.finishedAt ?? null;
+  return rows[0]?.startedAt ?? null;
 }
 
 export async function GET(req: NextRequest) {
@@ -57,10 +66,10 @@ export async function GET(req: NextRequest) {
   const results: Array<{ source: string; skipped?: string; ok?: boolean; error?: string }> = [];
 
   for (const src of SOURCES) {
-    const last = await lastSuccessAt(src.source);
+    const last = await lastAttemptAt(src.source);
     const staleMin = last ? (Date.now() - last.getTime()) / 60_000 : Infinity;
     if (staleMin < src.minIntervalMin) {
-      results.push({ source: src.source, skipped: `fresh (${Math.round(staleMin)}m ago)` });
+      results.push({ source: src.source, skipped: `recent attempt (${Math.round(staleMin)}m ago)` });
       continue;
     }
     try {

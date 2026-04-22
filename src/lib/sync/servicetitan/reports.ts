@@ -104,18 +104,17 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
       continue;
     }
 
-    // 429 or 5xx: respect Retry-After, else exponential backoff
-    if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
-      let bodyText: string | null = null;
-      try {
-        bodyText = await res.clone().text();
-      } catch {
-        /* ignore */
-      }
-      const suggested = parseRetryAfterMs(res, bodyText);
+    // 429: rate limit. DO NOT retry here — ST's hint (often 30+s) combined
+    // with a 7-day sync blows past Vercel's 300s function limit. Fail fast,
+    // let the next scheduled sync try in a fresh rate window.
+    if (res.status === 429) {
+      return res;
+    }
+
+    // 5xx: transient server error, short exponential backoff.
+    if (res.status >= 500 && attempt < MAX_RETRIES) {
       const backoff = Math.min(DEFAULT_RETRY_MS * Math.pow(2, attempt), MAX_WAIT_MS);
-      const waitMs = suggested ?? backoff;
-      await sleep(waitMs);
+      await sleep(backoff);
       attempt++;
       continue;
     }
