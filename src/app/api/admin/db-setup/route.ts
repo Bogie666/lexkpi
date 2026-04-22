@@ -32,7 +32,7 @@ function authorized(req: NextRequest): boolean {
  * drizzle-kit push locally; this path exists to patch production when we
  * can't reach it from a shell.
  */
-async function runSchema(): Promise<{ tablesEnsured: string[] }> {
+async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: string[] }> {
   const url =
     process.env.DATABASE_URL_UNPOOLED ??
     process.env.POSTGRES_URL_NON_POOLING ??
@@ -53,7 +53,13 @@ async function runSchema(): Promise<{ tablesEnsured: string[] }> {
     )
   `;
 
-  return { tablesEnsured: ['business_units'] };
+  // closed_opportunities column added for the Jobs sync.
+  await sql`
+    ALTER TABLE financial_daily
+    ADD COLUMN IF NOT EXISTS closed_opportunities integer NOT NULL DEFAULT 0
+  `;
+
+  return { tablesEnsured: ['business_units'], columnsEnsured: ['financial_daily.closed_opportunities'] };
 }
 
 /**

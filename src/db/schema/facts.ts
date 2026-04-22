@@ -55,6 +55,7 @@ export const financialDaily = pgTable(
     totalRevenueCents: bigint('total_revenue_cents', { mode: 'number' }).notNull().default(0),
     jobs: integer('jobs').notNull().default(0),
     opportunities: integer('opportunities').notNull().default(0),
+    closedOpportunities: integer('closed_opportunities').notNull().default(0),
 
     sourceReportId: text('source_report_id').notNull(),
     syncedAt: timestamp('synced_at').defaultNow().notNull(),

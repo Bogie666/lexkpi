@@ -53,6 +53,7 @@ async function financialKpiAggregate(window: Window) {
       totalRevenueCents: sql<number>`COALESCE(SUM(${financialDaily.totalRevenueCents}), 0)`,
       totalJobs: sql<number>`COALESCE(SUM(${financialDaily.jobs}), 0)`,
       totalOpps: sql<number>`COALESCE(SUM(${financialDaily.opportunities}), 0)`,
+      totalClosedOpps: sql<number>`COALESCE(SUM(${financialDaily.closedOpportunities}), 0)`,
     })
     .from(financialDaily)
     .where(
@@ -61,7 +62,9 @@ async function financialKpiAggregate(window: Window) {
         lte(financialDaily.reportDate, window.to),
       ),
     );
-  return rows[0] ?? { totalRevenueCents: 0, totalJobs: 0, totalOpps: 0 };
+  return (
+    rows[0] ?? { totalRevenueCents: 0, totalJobs: 0, totalOpps: 0, totalClosedOpps: 0 }
+  );
 }
 
 // Latest membership_daily row per tier at or before `to`, summed.
@@ -253,24 +256,34 @@ export async function GET(req: NextRequest) {
   const totalLy = lyCum[lyCum.length - 1];
   const totalLy2 = ly2Cum[ly2Cum.length - 1];
 
-  // KPIs
+  // KPIs — close rate = closed opportunities / total opportunities,
+  // avg ticket = revenue / total completed jobs (matches ST report defs).
   const teamRev = Number(teamCur.totalRevenueCents);
   const teamJobs = Number(teamCur.totalJobs);
   const teamOpps = Number(teamCur.totalOpps);
-  const closeRateBps = teamOpps > 0 ? Math.round((teamJobs / teamOpps) * 10000) : 0;
+  const teamClosedOpps = Number(teamCur.totalClosedOpps);
+  const closeRateBps = teamOpps > 0 ? Math.round((teamClosedOpps / teamOpps) * 10000) : 0;
   const avgTicketCents = teamJobs > 0 ? Math.round(teamRev / teamJobs) : 0;
 
   // Pull LY equivalents for KPIs
   const teamLy = await financialKpiAggregate(period.ly);
   const teamLy2 = await financialKpiAggregate(period.ly2);
   const lyCloseBps =
-    Number(teamLy.totalOpps) > 0 ? Math.round((Number(teamLy.totalJobs) / Number(teamLy.totalOpps)) * 10000) : 0;
+    Number(teamLy.totalOpps) > 0
+      ? Math.round((Number(teamLy.totalClosedOpps) / Number(teamLy.totalOpps)) * 10000)
+      : 0;
   const ly2CloseBps =
-    Number(teamLy2.totalOpps) > 0 ? Math.round((Number(teamLy2.totalJobs) / Number(teamLy2.totalOpps)) * 10000) : 0;
+    Number(teamLy2.totalOpps) > 0
+      ? Math.round((Number(teamLy2.totalClosedOpps) / Number(teamLy2.totalOpps)) * 10000)
+      : 0;
   const lyAvgTicket =
-    Number(teamLy.totalJobs) > 0 ? Math.round(Number(teamLy.totalRevenueCents) / Number(teamLy.totalJobs)) : 0;
+    Number(teamLy.totalJobs) > 0
+      ? Math.round(Number(teamLy.totalRevenueCents) / Number(teamLy.totalJobs))
+      : 0;
   const ly2AvgTicket =
-    Number(teamLy2.totalJobs) > 0 ? Math.round(Number(teamLy2.totalRevenueCents) / Number(teamLy2.totalJobs)) : 0;
+    Number(teamLy2.totalJobs) > 0
+      ? Math.round(Number(teamLy2.totalRevenueCents) / Number(teamLy2.totalJobs))
+      : 0;
 
   const memLy = await membershipActiveAsOf(period.ly.to);
   const memLy2 = await membershipActiveAsOf(period.ly2.to);

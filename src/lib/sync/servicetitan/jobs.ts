@@ -54,6 +54,23 @@ interface StJob {
   noCharge?: boolean;
   recallForId?: number | null;
   warrantyId?: number | null;
+  total?: number | string | null;
+}
+
+/**
+ * Dollar threshold above which a completed opportunity counts as "closed".
+ * ST's report uses a configurable "sold threshold" from tenant settings;
+ * we approximate with a low flat value to exclude $0 invoices. Refine
+ * later by reading the setting (/settings/v2/...) if the delta matters.
+ */
+const SOLD_THRESHOLD_CENTS = 100 * 100;
+
+function jobTotalCents(j: StJob): number {
+  const raw = j.total;
+  if (raw === null || raw === undefined) return 0;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100);
 }
 
 function dateOf(j: StJob): string | null {
@@ -135,7 +152,7 @@ export async function syncJobs(
     // Aggregate by (dept, completion_date).
     const agg = new Map<
       string,
-      { dept: string; date: string; jobs: number; opps: number }
+      { dept: string; date: string; jobs: number; opps: number; closedOpps: number }
     >();
     for (const j of jobs) {
       const date = dateOf(j);
@@ -155,15 +172,17 @@ export async function syncJobs(
       }
       const dept = buToDept.get(buId);
       if (!dept) {
-        // Known BU, explicitly dropped (e.g. Service Star).
         dropped++;
         continue;
       }
       const key = `${dept}|${date}`;
-      if (!agg.has(key)) agg.set(key, { dept, date, jobs: 0, opps: 0 });
+      if (!agg.has(key)) agg.set(key, { dept, date, jobs: 0, opps: 0, closedOpps: 0 });
       const entry = agg.get(key)!;
       entry.jobs += 1;
-      if (isOpportunity(j)) entry.opps += 1;
+      if (isOpportunity(j)) {
+        entry.opps += 1;
+        if (jobTotalCents(j) >= SOLD_THRESHOLD_CENTS) entry.closedOpps += 1;
+      }
     }
 
     const rows = Array.from(agg.values()).map((r) => ({
@@ -172,6 +191,7 @@ export async function syncJobs(
       totalRevenueCents: 0, // Placeholder — preserved by onConflict if row exists.
       jobs: r.jobs,
       opportunities: r.opps,
+      closedOpportunities: r.closedOpps,
       sourceReportId: JOBS_SOURCE,
     }));
 
@@ -186,10 +206,11 @@ export async function syncJobs(
           .onConflictDoUpdate({
             target: [financialDaily.departmentCode, financialDaily.reportDate],
             set: {
-              // Only jobs + opportunities come from this sync. Revenue stays
+              // Only job-derived columns come from this sync. Revenue stays
               // whatever the invoices sync wrote there.
               jobs: sql.raw(`excluded.jobs`),
               opportunities: sql.raw(`excluded.opportunities`),
+              closedOpportunities: sql.raw(`excluded.closed_opportunities`),
               syncedAt: new Date(),
             },
           });
