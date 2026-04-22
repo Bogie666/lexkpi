@@ -57,7 +57,7 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
       <TrendLegend mode={compareYear} />
     </div>
   ) : (
-    <div className="min-h-[220px] aspect-[16/9] lg:aspect-auto">
+    <div className="h-[240px] sm:h-[280px] lg:h-auto lg:min-h-[220px]">
       <AreaTrend
         data={
           trend.map((t) => ({

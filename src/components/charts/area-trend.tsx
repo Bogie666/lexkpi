@@ -22,7 +22,11 @@ export interface AreaTrendProps {
   className?: string;
 }
 
-const PAD = { top: 16, right: 16, bottom: 28, left: 52 };
+// Right padding is generous on purpose — when the SVG is downscaled onto a
+// narrow mobile viewport, small viewBox units translate to only a few
+// rendered pixels, and the line otherwise looks like it's running off the
+// edge of the card.
+const PAD = { top: 16, right: 40, bottom: 28, left: 56 };
 
 export function AreaTrend({
   data,

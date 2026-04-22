@@ -24,7 +24,8 @@ export interface DualTrendProps {
   className?: string;
 }
 
-const PAD = { top: 16, right: 16, bottom: 28, left: 52 };
+// See AreaTrend for the padding rationale — the same story applies here.
+const PAD = { top: 16, right: 40, bottom: 28, left: 56 };
 
 export function DualTrend({
   data,
