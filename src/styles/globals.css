@@ -118,3 +118,14 @@ svg text {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* Containers that use overflow-x-auto for scroll-if-needed shouldn't show
+   the native scrollbar chrome — it was leaking through on the main nav tab
+   row at mid-width desktop. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
