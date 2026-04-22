@@ -162,27 +162,23 @@ function jobTypeSettings(j: StJob, map: Map<number, JobTypeSettings>): JobTypeSe
   return map.get(j.jobTypeId) ?? FALLBACK_SETTINGS;
 }
 
-/**
- * "No-Charge / Non-Opportunity" per ST: TRUE if the job itself is flagged
- * no-charge OR its JobType is flagged no-charge. Either surface marks the
- * job as a non-opp candidate (subject to the threshold override below).
- */
-function isNoChargeEffective(j: StJob, settings: JobTypeSettings): boolean {
-  return Boolean(j.noCharge) || settings.noCharge;
-}
-
 function soldSubtotalForJob(j: StJob, soldByJob: Map<number, number>): number {
   return soldByJob.get(j.id) ?? 0;
 }
 
 /**
- * ST's "Sales Opportunity" rule (per the team-provided definition):
+ * ST's job-type-level `noCharge` flag marks fulfillment / follow-up work
+ * (Install, Recall, Quality Control, Follow Up, etc.) — these are never
+ * sales opportunities, since the sale already happened at estimate time.
+ * The per-job noCharge flag is a softer signal: a one-off non-charged
+ * job that can still count as an opp if a sold estimate above threshold
+ * was attached.
  *
- *   A completed job counts as a sales opportunity if it is NOT marked
- *   No-Charge / Non-Opportunity. A no-charge job is still a sales
- *   opportunity if it has a sold estimate with subtotal ≥ the sales
- *   threshold set on the job's JobType. Warranty and recall status do
- *   NOT exclude a job from being a sales opportunity.
+ * Rule:
+ *   - jobType.noCharge === true → always excluded (no threshold override)
+ *   - job.noCharge === true, but jobType is charge-eligible → excluded
+ *     unless a sold estimate subtotal ≥ threshold
+ *   - Otherwise → always counted as an opportunity
  */
 function isOpportunity(
   j: StJob,
@@ -190,14 +186,15 @@ function isOpportunity(
   soldByJob: Map<number, number>,
 ): boolean {
   const s = jobTypeSettings(j, typeMap);
-  if (!isNoChargeEffective(j, s)) return true;
+  if (s.noCharge) return false;
+  if (!j.noCharge) return true;
   return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
 }
 
 /**
- * Closed Opportunity: a completed job whose max sold-estimate subtotal
- * is ≥ the job type's sold threshold. Jobs with no sold estimate never
- * qualify, even if their invoice total happens to exceed the threshold.
+ * Closed Opportunity: must be a counted opportunity AND have a sold
+ * estimate subtotal ≥ the job type's soldThreshold. Never fires for
+ * fulfillment types since they aren't opportunities to begin with.
  */
 function isClosedOpportunity(
   j: StJob,
@@ -205,6 +202,7 @@ function isClosedOpportunity(
   soldByJob: Map<number, number>,
 ): boolean {
   const s = jobTypeSettings(j, typeMap);
+  if (s.noCharge) return false;
   return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
 }
 
