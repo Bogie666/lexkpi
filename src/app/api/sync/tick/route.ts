@@ -17,7 +17,7 @@ import { trailingDays } from '@/lib/sync/window';
 void eq;
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 interface SourceConfig {
   source: string;

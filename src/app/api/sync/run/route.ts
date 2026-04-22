@@ -11,7 +11,9 @@ import { syncFinancial } from '@/lib/sync/servicetitan/financial';
 import { trailingDays } from '@/lib/sync/window';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+// Backfill months can pull ~100K invoices each; 300s isn't always enough.
+// Vercel Pro allows up to 800s on Node.js serverless functions.
+export const maxDuration = 800;
 
 const SOURCES = ['financial'] as const;
 type Source = (typeof SOURCES)[number];
