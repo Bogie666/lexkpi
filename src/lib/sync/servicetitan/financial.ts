@@ -42,26 +42,34 @@ export interface SyncResult {
 
 /**
  * Shape of an invoice item we care about. ST returns more fields; we pull
- * only the ones relevant to revenue accounting.
+ * only the ones relevant to revenue accounting. Numeric fields come back
+ * as strings ("5056.66") or numbers, so we normalize at parse time.
  */
 interface StInvoiceItem {
   id: number;
   skuName?: string;
-  type?: string;                    // 'Service', 'Material', 'Equipment', 'Labor', …
-  total: number;                    // gross for this line item
+  type?: string;
+  total: string | number | null;
   businessUnit?: { id: number; name?: string } | null;
   generalLedgerAccount?: { id: number; name?: string; type?: string } | null;
 }
 
 interface StInvoice {
   id: number;
-  invoicedOn?: string | null;       // ISO date-time
-  invoiceDate?: string | null;      // some ST tenants use this key
+  invoicedOn?: string | null;
+  invoiceDate?: string | null;
   status?: string;
   adjustmentToId?: number | null;
   items?: StInvoiceItem[];
   businessUnit?: { id: number; name?: string } | null;
-  total?: number;
+  total?: string | number | null;
+}
+
+function toCents(raw: string | number | null | undefined): number {
+  if (raw === null || raw === undefined) return 0;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100);
 }
 
 function dateOf(inv: StInvoice): string | null {
@@ -181,7 +189,7 @@ export async function syncFinancial(
           itemsDropped++;
           continue;
         }
-        const cents = Math.round((item.total ?? 0) * 100);
+        const cents = toCents(item.total);
         const key = `${dept}|${date}`;
         const prior = agg.get(key);
         if (prior) prior.totalCents += cents;
