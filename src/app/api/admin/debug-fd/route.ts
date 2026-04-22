@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const database = db();
-  const summary = await database.execute(sql`
+  const summaryResult = await database.execute(sql`
     SELECT
       COUNT(*)::int                              AS total_rows,
       COUNT(DISTINCT report_date)::int           AS unique_dates,
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
       MAX(report_date)::text                     AS latest
     FROM financial_daily
   `);
-  const byYear = await database.execute(sql`
+  const byYearResult = await database.execute(sql`
     SELECT
       EXTRACT(YEAR FROM report_date)::int AS year,
       COUNT(*)::int                       AS rows,
@@ -42,8 +42,13 @@ export async function GET(req: NextRequest) {
     ORDER BY 1
   `);
 
+  // Neon HTTP's execute result is iterable but not always array-indexable in
+  // the type. Normalise to arrays via spread.
+  const summaryRows = [...(summaryResult as unknown as Iterable<unknown>)];
+  const byYear = [...(byYearResult as unknown as Iterable<unknown>)];
+
   return NextResponse.json({
-    summary: summary[0] ?? summary,
+    summary: summaryRows[0] ?? null,
     byYear,
   });
 }
