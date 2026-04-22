@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Plus, Pencil, Trash2, Save, X } from 'lucide-react';
+import { useMemo, useState, type FormEvent } from 'react';
+import { Plus, Pencil, Trash2, Save, X, Copy } from 'lucide-react';
 import { Panel } from '@/components/primitives/panel';
 import { SectionHead } from '@/components/primitives/section-head';
 import { Button } from '@/components/primitives/button';
@@ -18,7 +18,9 @@ import {
   type TargetUpsertInput,
 } from '@/lib/hooks/use-admin-targets';
 
-const DEPT_CODES = [
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const DEPT_CODES: Array<{ code: string; name: string }> = [
   { code: 'hvac_service', name: 'HVAC Service' },
   { code: 'hvac_sales', name: 'HVAC Sales' },
   { code: 'hvac_maintenance', name: 'HVAC Maintenance' },
@@ -36,14 +38,21 @@ const METRICS = [
   { value: 'memberships', label: 'Memberships', unit: 'count' as const },
 ];
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
 function metricInfo(metric: string) {
   return METRICS.find((m) => m.value === metric) ?? { value: metric, label: metric, unit: 'count' as const };
 }
 
-function formatTargetValue(row: TargetRow | { targetValue: number; unit: TargetRow['unit'] }): string {
-  if (row.unit === 'cents') return fmtMoney(row.targetValue);
-  if (row.unit === 'bps') return fmtPercent(row.targetValue);
-  return row.targetValue.toLocaleString('en-US');
+function formatTargetValue(value: number, unit: TargetRow['unit']): string {
+  if (unit === 'cents') return fmtMoney(value);
+  if (unit === 'bps') return fmtPercent(value);
+  return value.toLocaleString('en-US');
 }
 
 function scopeLabel(row: Pick<TargetRow, 'scope' | 'scopeValue'>): string {
@@ -52,36 +61,27 @@ function scopeLabel(row: Pick<TargetRow, 'scope' | 'scopeValue'>): string {
   return match?.name ?? row.scopeValue ?? row.scope;
 }
 
-function fmtDateRange(from: string, to: string): string {
-  return `${from} → ${to}`;
+function firstOfMonth(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}-01`;
+}
+function lastOfMonth(year: number, month: number): string {
+  const d = new Date(Date.UTC(year, month, 0));
+  return d.toISOString().slice(0, 10);
+}
+function monthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}`;
 }
 
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
+function isRevenueMonthlyDept(r: TargetRow): boolean {
+  return r.metric === 'revenue' && r.scope === 'department';
+}
 
-function yearOf(date: string): number {
-  return Number(date.slice(0, 4));
+function previousMonth(year: number, month: number): { year: number; month: number } {
+  if (month === 1) return { year: year - 1, month: 12 };
+  return { year, month: month - 1 };
 }
-function monthKeyOf(date: string): string {
-  return date.slice(0, 7); // YYYY-MM
-}
-function monthLabel(key: string): string {
-  const [y, m] = key.split('-').map(Number);
-  return `${MONTH_NAMES[m - 1]} ${y}`;
-}
-function compareRowsInMonth(a: TargetRow, b: TargetRow): number {
-  // Company first, then departments alphabetically, then other scopes
-  const scopeOrder = { company: 0, department: 1, role: 2, employee: 3 } as const;
-  if (scopeOrder[a.scope] !== scopeOrder[b.scope]) {
-    return scopeOrder[a.scope] - scopeOrder[b.scope];
-  }
-  if ((a.scopeValue ?? '') !== (b.scopeValue ?? '')) {
-    return (a.scopeValue ?? '').localeCompare(b.scopeValue ?? '');
-  }
-  return a.metric.localeCompare(b.metric);
-}
+
+// ─── Main ───────────────────────────────────────────────────────────────────
 
 export function TargetsClient() {
   const { data, isLoading, error, refetch } = useTargetsList();
@@ -89,41 +89,53 @@ export function TargetsClient() {
   const del = useTargetDelete();
 
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [showAdd, setShowAdd] = useState(false);
+  const [addingContext, setAddingContext] = useState<{ monthKey: string; dept: string } | null>(
+    null,
+  );
+  const [showFullAdd, setShowFullAdd] = useState(false);
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
-  // Years actually represented in the data, plus the current year so new
-  // targets have somewhere to land.
+  // Available years — union of years in data + current year.
   const availableYears = useMemo(() => {
     const set = new Set<number>();
     set.add(new Date().getUTCFullYear());
     (data ?? []).forEach((r) => {
-      set.add(yearOf(r.effectiveFrom));
-      set.add(yearOf(r.effectiveTo));
+      set.add(Number(r.effectiveFrom.slice(0, 4)));
+      set.add(Number(r.effectiveTo.slice(0, 4)));
     });
     return Array.from(set).sort((a, b) => b - a);
   }, [data]);
 
-  // Default to current year on first load (or most-recent with data).
   const activeYear = selectedYear ?? availableYears[0] ?? new Date().getUTCFullYear();
 
-  // Bucket the filtered rows by month key, within the selected year.
-  const monthGroups = useMemo(() => {
-    const groups = new Map<string, TargetRow[]>();
+  // Split targets into the monthly-revenue view vs "other" (close_rate, etc.)
+  const { monthlyRevByKeyByDept, otherTargets } = useMemo(() => {
+    const byMonth = new Map<string, Map<string, TargetRow>>(); // monthKey → dept → row
+    const other: TargetRow[] = [];
     (data ?? []).forEach((r) => {
-      if (yearOf(r.effectiveFrom) !== activeYear) return;
-      const key = monthKeyOf(r.effectiveFrom);
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(r);
+      if (isRevenueMonthlyDept(r)) {
+        const key = r.effectiveFrom.slice(0, 7);
+        if (!byMonth.has(key)) byMonth.set(key, new Map());
+        byMonth.get(key)!.set(r.scopeValue ?? '', r);
+      } else {
+        other.push(r);
+      }
     });
-    // Sort each month's rows
-    groups.forEach((rows) => rows.sort(compareRowsInMonth));
-    // Return sorted by month descending (newest first)
-    return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [data, activeYear]);
+    return { monthlyRevByKeyByDept: byMonth, otherTargets: other };
+  }, [data]);
 
-  const totalInYear = monthGroups.reduce((sum, [, rows]) => sum + rows.length, 0);
+  // 12 months of the active year.
+  const months = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, i) => ({
+        year: activeYear,
+        month: i + 1,
+        key: monthKey(activeYear, i + 1),
+        label: `${MONTH_NAMES[i]} ${activeYear}`,
+      })),
+    [activeYear],
+  );
 
   const notify = (kind: 'success' | 'error', msg: string) => {
     setToast({ kind, msg });
@@ -135,7 +147,8 @@ export function TargetsClient() {
       await upsert.mutateAsync(input);
       notify('success', 'Saved');
       setEditingId(null);
-      setShowAdd(false);
+      setAddingContext(null);
+      setShowFullAdd(false);
     } catch (err) {
       notify('error', err instanceof Error ? err.message : String(err));
     }
@@ -151,6 +164,41 @@ export function TargetsClient() {
     }
   };
 
+  // Bulk copy previous month's dept targets into this month.
+  const onCopyFromPrevious = async (year: number, month: number) => {
+    const prev = previousMonth(year, month);
+    const prevMap = monthlyRevByKeyByDept.get(monthKey(prev.year, prev.month));
+    if (!prevMap || prevMap.size === 0) {
+      notify('error', 'No previous month to copy from');
+      return;
+    }
+    const currentMap = monthlyRevByKeyByDept.get(monthKey(year, month)) ?? new Map();
+    const toCreate = Array.from(prevMap.values()).filter(
+      (r) => r.scopeValue && !currentMap.has(r.scopeValue),
+    );
+    if (!toCreate.length) {
+      notify('error', 'Nothing to copy (current month already has those depts set)');
+      return;
+    }
+    try {
+      for (const row of toCreate) {
+        await upsert.mutateAsync({
+          metric: 'revenue',
+          scope: 'department',
+          scopeValue: row.scopeValue,
+          effectiveFrom: firstOfMonth(year, month),
+          effectiveTo: lastOfMonth(year, month),
+          targetValue: row.targetValue,
+          unit: row.unit,
+          notes: row.notes ?? undefined,
+        });
+      }
+      notify('success', `Copied ${toCreate.length} target${toCreate.length === 1 ? '' : 's'}`);
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : String(err));
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <SectionHead
@@ -161,8 +209,9 @@ export function TargetsClient() {
             variant="primary"
             size="md"
             onClick={() => {
-              setShowAdd(true);
+              setShowFullAdd(true);
               setEditingId(null);
+              setAddingContext(null);
             }}
           >
             <Plus className="h-4 w-4" />
@@ -171,11 +220,11 @@ export function TargetsClient() {
         }
       />
 
-      {showAdd && (
+      {showFullAdd && (
         <Panel title="New target" eyebrow="Add" padding="cozy">
           <TargetForm
             mode="create"
-            onCancel={() => setShowAdd(false)}
+            onCancel={() => setShowFullAdd(false)}
             onSave={onSave}
             busy={upsert.isPending}
           />
@@ -202,123 +251,230 @@ export function TargetsClient() {
 
       {data && (
         <>
-          <YearTabs
-            years={availableYears}
-            active={activeYear}
-            onChange={setSelectedYear}
-          />
+          <div className="flex items-center gap-3 flex-wrap">
+            <YearTabs
+              years={availableYears}
+              active={activeYear}
+              onChange={setSelectedYear}
+            />
+            <span className="text-[11px] uppercase tracking-[0.08em] text-muted">
+              Company targets auto-sum from departments
+            </span>
+          </div>
 
-          {monthGroups.length === 0 ? (
-            <Panel padding="cozy">
-              <div className="py-8 text-center text-[13px] text-muted">
-                No targets set for {activeYear} yet.
-              </div>
-            </Panel>
-          ) : (
-            <div className="flex flex-col gap-4">
-              {monthGroups.map(([monthKey, rows]) => (
+          {/* Revenue — one Panel per month */}
+          <div className="flex flex-col gap-4">
+            {months.map(({ year, month, key, label }) => {
+              const deptRows = monthlyRevByKeyByDept.get(key) ?? new Map();
+              const total = Array.from(deptRows.values()).reduce(
+                (s, r) => s + Number(r.targetValue),
+                0,
+              );
+              const filled = deptRows.size;
+              const prev = previousMonth(year, month);
+              const prevHasAny = (monthlyRevByKeyByDept.get(monthKey(prev.year, prev.month)) ?? new Map()).size > 0;
+
+              return (
                 <Panel
-                  key={monthKey}
-                  eyebrow={`${rows.length} target${rows.length === 1 ? '' : 's'}`}
-                  title={monthLabel(monthKey)}
+                  key={key}
+                  eyebrow={`Company: ${fmtMoney(total)}  ·  ${filled}/${DEPT_CODES.length} filled`}
+                  title={label}
                   padding="cozy"
                   right={
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setShowAdd(true);
-                        setEditingId(null);
-                      }}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Add
-                    </Button>
+                    prevHasAny && filled < DEPT_CODES.length ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onCopyFromPrevious(year, month)}
+                        disabled={upsert.isPending}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copy from {MONTH_NAMES[prev.month - 1].slice(0, 3)} {prev.year}
+                      </Button>
+                    ) : null
                   }
                 >
-                  <div className="overflow-x-auto -mx-2 px-2">
-                    <table className="w-full text-left">
-                      <thead>
-                        <tr className="col-head border-b border-border">
-                          <th className="py-2 pr-4 font-normal">Scope</th>
-                          <th className="py-2 pr-4 font-normal">Metric</th>
-                          <th className="py-2 pr-4 font-normal hidden lg:table-cell">Window</th>
-                          <th className="py-2 pr-4 font-normal text-right">Target</th>
-                          <th className="py-2 pr-2 font-normal text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map((row) =>
-                          editingId === row.id ? (
-                            <tr key={row.id} className="border-b border-border/60">
-                              <td colSpan={5} className="py-4">
-                                <TargetForm
-                                  mode="edit"
-                                  initial={row}
-                                  onCancel={() => setEditingId(null)}
-                                  onSave={onSave}
-                                  busy={upsert.isPending}
-                                />
-                              </td>
-                            </tr>
-                          ) : (
-                            <tr
-                              key={row.id}
-                              className="border-b border-border/60 last:border-0 hover:bg-surface-2/20 transition-colors"
-                            >
-                              <td className="py-3 pr-4">
-                                <div className="flex items-center gap-2">
-                                  {row.scope === 'company' ? (
-                                    <Pill tone="accent" size="sm">
-                                      Company
-                                    </Pill>
-                                  ) : (
-                                    <span
-                                      aria-hidden="true"
-                                      className="h-2.5 w-2.5 rounded-full shrink-0"
-                                      style={{
-                                        background:
-                                          row.scope === 'department' && row.scopeValue
-                                            ? `var(--d-${row.scopeValue})`
-                                            : 'var(--muted)',
-                                      }}
-                                    />
-                                  )}
-                                  <span className="text-[13px] font-medium">{scopeLabel(row)}</span>
-                                </div>
-                              </td>
-                              <td className="py-3 pr-4 text-[13px]">{metricInfo(row.metric).label}</td>
-                              <td className="py-3 pr-4 hidden lg:table-cell text-[12px] text-muted font-mono tabular-nums">
-                                {fmtDateRange(row.effectiveFrom, row.effectiveTo)}
-                              </td>
-                              <td className="py-3 pr-4 text-right font-mono tabular-nums text-[14px] font-medium">
-                                {formatTargetValue(row)}
-                              </td>
-                              <td className="py-3 pr-2 text-right">
-                                <div className="inline-flex gap-1">
-                                  <Button size="sm" variant="ghost" onClick={() => setEditingId(row.id)}>
-                                    <Pencil className="h-3.5 w-3.5" />
-                                    Edit
-                                  </Button>
-                                  <Button size="sm" variant="danger" onClick={() => onDelete(row.id)}>
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
-                          ),
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </Panel>
-              ))}
-            </div>
-          )}
+                  <ul className="flex flex-col divide-y divide-border/60">
+                    {DEPT_CODES.map((dept) => {
+                      const row = deptRows.get(dept.code);
+                      const isAdding =
+                        addingContext?.monthKey === key && addingContext?.dept === dept.code;
+                      const isEditing = row && editingId === row.id;
 
-          <div className="text-[11px] text-muted font-mono tabular-nums text-right">
-            {totalInYear} target{totalInYear === 1 ? '' : 's'} in {activeYear} · {data.length} total
+                      return (
+                        <li key={dept.code} className="flex items-center gap-3 py-3">
+                          <span
+                            aria-hidden="true"
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ background: `var(--d-${dept.code})` }}
+                          />
+                          <span className="text-[13px] font-medium min-w-0 w-[180px] md:w-[220px]">
+                            {dept.name}
+                          </span>
+
+                          {isAdding || isEditing ? (
+                            <InlineRevenueValue
+                              initial={row?.targetValue}
+                              onSave={async (cents) => {
+                                await onSave({
+                                  metric: 'revenue',
+                                  scope: 'department',
+                                  scopeValue: dept.code,
+                                  effectiveFrom: firstOfMonth(year, month),
+                                  effectiveTo: lastOfMonth(year, month),
+                                  targetValue: cents,
+                                  unit: 'cents',
+                                });
+                              }}
+                              onCancel={() => {
+                                setEditingId(null);
+                                setAddingContext(null);
+                              }}
+                              busy={upsert.isPending}
+                            />
+                          ) : row ? (
+                            <>
+                              <span className="font-mono tabular-nums text-[14px] font-medium flex-1">
+                                {fmtMoney(row.targetValue)}
+                              </span>
+                              <div className="inline-flex gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setEditingId(row.id);
+                                    setAddingContext(null);
+                                  }}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Edit
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="danger"
+                                  onClick={() => onDelete(row.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-[13px] text-muted flex-1">— not set —</span>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setAddingContext({ monthKey: key, dept: dept.code });
+                                  setEditingId(null);
+                                }}
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                                Add
+                              </Button>
+                            </>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </Panel>
+              );
+            })}
           </div>
+
+          {/* Non-revenue targets */}
+          {otherTargets.length > 0 && (
+            <Panel
+              eyebrow={`${otherTargets.length} row${otherTargets.length === 1 ? '' : 's'}`}
+              title="Other targets (non-revenue)"
+              padding="cozy"
+            >
+              <div className="overflow-x-auto -mx-2 px-2">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="col-head border-b border-border">
+                      <th className="py-2 pr-4 font-normal">Scope</th>
+                      <th className="py-2 pr-4 font-normal">Metric</th>
+                      <th className="py-2 pr-4 font-normal hidden md:table-cell">Window</th>
+                      <th className="py-2 pr-4 font-normal text-right">Target</th>
+                      <th className="py-2 pr-2 font-normal text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {otherTargets.map((row) =>
+                      editingId === row.id ? (
+                        <tr key={row.id} className="border-b border-border/60">
+                          <td colSpan={5} className="py-4">
+                            <TargetForm
+                              mode="edit"
+                              initial={row}
+                              onCancel={() => setEditingId(null)}
+                              onSave={onSave}
+                              busy={upsert.isPending}
+                            />
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr
+                          key={row.id}
+                          className="border-b border-border/60 last:border-0 hover:bg-surface-2/20 transition-colors"
+                        >
+                          <td className="py-3 pr-4">
+                            <div className="flex items-center gap-2">
+                              {row.scope === 'company' ? (
+                                <Pill tone="accent" size="sm">
+                                  Company
+                                </Pill>
+                              ) : (
+                                <span
+                                  aria-hidden="true"
+                                  className="h-2.5 w-2.5 rounded-full shrink-0"
+                                  style={{
+                                    background:
+                                      row.scope === 'department' && row.scopeValue
+                                        ? `var(--d-${row.scopeValue})`
+                                        : 'var(--muted)',
+                                  }}
+                                />
+                              )}
+                              <span className="text-[13px] font-medium">{scopeLabel(row)}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4 text-[13px]">{metricInfo(row.metric).label}</td>
+                          <td className="py-3 pr-4 hidden md:table-cell text-[12px] text-muted font-mono tabular-nums">
+                            {row.effectiveFrom} → {row.effectiveTo}
+                          </td>
+                          <td className="py-3 pr-4 text-right font-mono tabular-nums text-[14px] font-medium">
+                            {formatTargetValue(row.targetValue, row.unit)}
+                          </td>
+                          <td className="py-3 pr-2 text-right">
+                            <div className="inline-flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditingId(row.id)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                Edit
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => onDelete(row.id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ),
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
         </>
       )}
 
@@ -331,6 +487,59 @@ export function TargetsClient() {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Inline revenue value input ─────────────────────────────────────────────
+
+function InlineRevenueValue({
+  initial,
+  onSave,
+  onCancel,
+  busy,
+}: {
+  initial?: number;
+  onSave: (cents: number) => Promise<void>;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  const [value, setValue] = useState(
+    initial !== undefined ? (initial / 100).toString() : '',
+  );
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const cleaned = value.replace(/,/g, '').replace(/\$/g, '').trim();
+    const n = Number(cleaned);
+    if (!Number.isFinite(n) || n < 0) return;
+    void onSave(Math.round(n * 100));
+  };
+  return (
+    <form onSubmit={handleSubmit} className="flex items-center gap-2 flex-1">
+      <div className="flex-1 relative">
+        <span
+          aria-hidden="true"
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-muted pointer-events-none"
+        >
+          $
+        </span>
+        <Input
+          type="text"
+          inputMode="decimal"
+          autoFocus
+          placeholder="0"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="pl-6"
+        />
+      </div>
+      <Button type="submit" size="sm" variant="primary" disabled={busy}>
+        <Save className="h-3.5 w-3.5" />
+        Save
+      </Button>
+      <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </form>
   );
 }
 
@@ -349,7 +558,7 @@ function YearTabs({
     <div
       role="tablist"
       aria-label="Year"
-      className="inline-flex items-center gap-0.5 p-1 bg-surface border border-border rounded-btn self-start"
+      className="inline-flex items-center gap-0.5 p-1 bg-surface border border-border rounded-btn"
     >
       {years.map((y) => {
         const isActive = y === active;
@@ -374,7 +583,7 @@ function YearTabs({
   );
 }
 
-// ─── Form ───────────────────────────────────────────────────────────────────
+// ─── Full form (non-revenue / arbitrary targets) ────────────────────────────
 
 interface TargetFormProps {
   mode: 'create' | 'edit';
@@ -387,8 +596,12 @@ interface TargetFormProps {
 function TargetForm({ mode, initial, onCancel, onSave, busy }: TargetFormProps) {
   const [metric, setMetric] = useState(initial?.metric ?? 'revenue');
   const [scope, setScope] = useState<TargetRow['scope']>(initial?.scope ?? 'department');
-  const [scopeValue, setScopeValue] = useState<string | null>(initial?.scopeValue ?? 'hvac_service');
-  const [effectiveFrom, setEffectiveFrom] = useState(initial?.effectiveFrom ?? defaultFromDate());
+  const [scopeValue, setScopeValue] = useState<string | null>(
+    initial?.scopeValue ?? 'hvac_service',
+  );
+  const [effectiveFrom, setEffectiveFrom] = useState(
+    initial?.effectiveFrom ?? defaultFromDate(),
+  );
   const [effectiveTo, setEffectiveTo] = useState(initial?.effectiveTo ?? defaultToDate());
   const [displayValue, setDisplayValue] = useState(
     initial ? displayFromTargetValue(initial.targetValue, initial.unit) : '',
@@ -397,7 +610,7 @@ function TargetForm({ mode, initial, onCancel, onSave, busy }: TargetFormProps) 
 
   const metricUnit = metricInfo(metric).unit;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const parsed = parseDisplayValue(displayValue, metricUnit);
     if (parsed === null) return;
@@ -443,10 +656,7 @@ function TargetForm({ mode, initial, onCancel, onSave, busy }: TargetFormProps) 
 
         {scope !== 'company' && (
           <Field label="Department">
-            <Select
-              value={scopeValue ?? ''}
-              onChange={(e) => setScopeValue(e.target.value)}
-            >
+            <Select value={scopeValue ?? ''} onChange={(e) => setScopeValue(e.target.value)}>
               {DEPT_CODES.map((d) => (
                 <option key={d.code} value={d.code}>
                   {d.name}
@@ -487,7 +697,9 @@ function TargetForm({ mode, initial, onCancel, onSave, busy }: TargetFormProps) 
           <Input
             type="number"
             step="any"
-            placeholder={metricUnit === 'cents' ? '2180000' : metricUnit === 'bps' ? '42.8' : '1000'}
+            placeholder={
+              metricUnit === 'cents' ? '2180000' : metricUnit === 'bps' ? '42.8' : '1000'
+            }
             value={displayValue}
             onChange={(e) => setDisplayValue(e.target.value)}
             required
@@ -530,7 +742,6 @@ function defaultToDate(): string {
   return last.toISOString().slice(0, 10);
 }
 
-/** Convert the user-typed display value into the canonical stored unit. */
 function parseDisplayValue(raw: string, unit: TargetRow['unit']): number | null {
   const cleaned = raw.replace(/,/g, '').trim();
   if (!cleaned) return null;
@@ -541,7 +752,6 @@ function parseDisplayValue(raw: string, unit: TargetRow['unit']): number | null 
   return Math.round(n);
 }
 
-/** Convert a stored value to the friendly display form for editing. */
 function displayFromTargetValue(value: number, unit: TargetRow['unit']): string {
   if (unit === 'cents') return (value / 100).toString();
   if (unit === 'bps') return (value / 100).toString();
