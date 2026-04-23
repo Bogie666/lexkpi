@@ -17,11 +17,11 @@ export type StartSyncRunResult =
   | { status: 'skipped'; reason: 'another_run_active' };
 
 /**
- * Zombie threshold. The longest legit sync should complete well inside a
- * Vercel function timeout (≤ 300s on Pro). Any `running` row older than this
- * was killed by the runtime before it could write its terminal state.
+ * Zombie threshold. Vercel functions can run up to 800s (13.3 min) on Pro.
+ * We give a little buffer past that so long-running syncs (estimates with
+ * many job lookups, big backfills) aren't falsely reaped while still alive.
  */
-const ZOMBIE_THRESHOLD_MS = 6 * 60_000;
+const ZOMBIE_THRESHOLD_MS = 15 * 60_000;
 
 export async function startSyncRun(args: StartSyncRunArgs): Promise<StartSyncRunResult> {
   const database = db();

@@ -15,7 +15,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { businessUnits, estimateAnalysis } from '@/db/schema';
-import { collectResource, fetchResourcePage } from './raw-client';
+import { collectResource } from './raw-client';
 import {
   startSyncRun,
   finishSyncRunSuccess,
@@ -70,28 +70,22 @@ async function loadBuToDeptMap(): Promise<Map<number, string | null>> {
 }
 
 /**
- * Batch-fetch jobs by id so we can resolve each estimate's dept. ST's
- * /jpm/v2/jobs endpoint accepts a comma-separated `ids` query param.
- * We cap at 50 ids per call to keep URL length well under any server
- * limit.
+ * Resolve jobId → businessUnitId by pulling every job modified within the
+ * last 3 years in a single paginated sweep. One big read is far cheaper
+ * than hundreds of batched `ids=...` calls (each of which costs 500ms of
+ * throttle + round-trip). For 100K jobs at 500/page → 200 pages → ~5 min
+ * with our rate-limiter, and we only do it once per sync.
  */
-async function fetchJobBUsByIds(jobIds: number[]): Promise<Map<number, number | null>> {
+async function loadJobBUsByModifiedWindow(): Promise<Map<number, number | null>> {
+  const modifiedOnOrAfter = new Date(Date.now() - 3 * 365 * 86_400_000)
+    .toISOString();
+  const jobs = await collectResource<StJob>({
+    path: '/jpm/v2/tenant/{tenant}/jobs',
+    query: { modifiedOnOrAfter },
+    pageSize: 500,
+  });
   const out = new Map<number, number | null>();
-  if (jobIds.length === 0) return out;
-  const CHUNK = 50;
-  for (let i = 0; i < jobIds.length; i += CHUNK) {
-    const chunk = jobIds.slice(i, i + CHUNK);
-    // fetchResourcePage returns a single page. We ask for pageSize=chunk+1
-    // so hasMore stays false and we get them all in one call.
-    const page = await fetchResourcePage<StJob>({
-      path: '/jpm/v2/tenant/{tenant}/jobs',
-      query: { ids: chunk.join(',') },
-      pageSize: Math.max(chunk.length + 10, 50),
-    });
-    for (const j of page.data ?? []) {
-      out.set(j.id, j.businessUnitId ?? null);
-    }
-  }
+  for (const j of jobs) out.set(j.id, j.businessUnitId ?? null);
   return out;
 }
 
@@ -147,11 +141,11 @@ export async function syncEstimates(
 
     const fetched = estimates.length;
 
-    // Batch-resolve jobs → BU for every unique jobId on the estimates.
+    // Load a broad jobId → BU map once, instead of 600 batched calls.
+    const jobBUs = await loadJobBUsByModifiedWindow();
     const jobIds = Array.from(
       new Set(estimates.map((e) => e.jobId).filter((id): id is number => id != null)),
     );
-    const jobBUs = await fetchJobBUsByIds(jobIds);
 
     // Build upsert rows — skip estimates we can't map to a dept.
     let dropped = 0;
