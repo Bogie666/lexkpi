@@ -48,8 +48,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, record });
     }
 
-    // Pull a small sample via the standard paginated endpoint — just the
-    // first page is enough for schema discovery.
+    // Pull every job in the window to count recall/warranty flag
+    // population across the whole set, not just a 50-sample.
     const jobs = await collectResource<StJob>({
       path: '/jpm/v2/tenant/{tenant}/jobs',
       query: {
@@ -57,12 +57,22 @@ export async function GET(req: NextRequest) {
         completedOnOrBefore: to ? `${to}T23:59:59Z` : undefined,
         jobStatus: 'Completed',
       },
-      pageSize: 50,
+      pageSize: 500,
     });
 
     const sample = jobs.slice(0, 50);
     const allKeys = new Set<string>();
     for (const j of sample) for (const k of Object.keys(j)) allKeys.add(k);
+
+    // Full-window counts on the gating flags we suspect.
+    const flagCounts = {
+      totalJobs: jobs.length,
+      withRecallForId: jobs.filter((j) => j.recallForId != null).length,
+      withWarrantyId: jobs.filter((j) => j.warrantyId != null).length,
+      withJobNoCharge: jobs.filter((j) => j.noCharge === true).length,
+      withCreatedFromEstimate: jobs.filter((j) => j.createdFromEstimateId != null).length,
+      withSoldById: jobs.filter((j) => j.soldById != null).length,
+    };
 
     // Pluck likely opportunity-gating fields across every job in sample, so
     // we can see variation patterns.
@@ -95,6 +105,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       sampleSize: sample.length,
+      flagCounts,
       keysSeen: Array.from(allKeys).sort(),
       sampleFull: sample[0] ?? null,
       suspects,
