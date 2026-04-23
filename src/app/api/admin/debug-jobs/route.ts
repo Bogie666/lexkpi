@@ -48,8 +48,34 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, record });
     }
 
-    // Pull every job in the window to count recall/warranty flag
-    // population across the whole set, not just a 50-sample.
+    // First: grab a single page to see ST's totalCount for the window.
+    // If that's unexpectedly huge, something's wrong with the date filter.
+    const firstPage = await fetchResourcePage<StJob>({
+      path: '/jpm/v2/tenant/{tenant}/jobs',
+      query: {
+        completedOnOrAfter: from ? `${from}T00:00:00Z` : undefined,
+        completedOnOrBefore: to ? `${to}T23:59:59Z` : undefined,
+        jobStatus: 'Completed',
+      },
+      pageSize: 500,
+    });
+
+    // Bail early if the window is huge — just return the page header
+    // so we can diagnose without timing out.
+    if ((firstPage.totalCount ?? 0) > 5000) {
+      return NextResponse.json({
+        ok: true,
+        bailedDueToSize: true,
+        totalCount: firstPage.totalCount,
+        firstPageSize: (firstPage.data ?? []).length,
+        hasMore: firstPage.hasMore,
+        sampleFull: (firstPage.data ?? [])[0] ?? null,
+        sampleCompletedOnDates: (firstPage.data ?? [])
+          .slice(0, 20)
+          .map((j) => j.completedOn),
+      });
+    }
+
     const jobs = await collectResource<StJob>({
       path: '/jpm/v2/tenant/{tenant}/jobs',
       query: {
