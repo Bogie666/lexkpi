@@ -62,6 +62,7 @@ export interface JobsSyncResult {
     soldEstimatesMatched: number; // jobs in window with a sold-estimate lookup hit
     recallFlagged: number; // jobs in window with recallForId != null (diagnostic)
     warrantyFlagged: number; // jobs in window with warrantyId != null (diagnostic)
+    createdFromEstimateFlagged: number; // jobs in window with createdFromEstimateId != null (diagnostic)
     // Per-jobType breakdown of opps. Sorted by descending opp count so the
     // biggest contributors to overcounting surface first. Useful for
     // reconciling against ST's report.
@@ -84,6 +85,7 @@ interface StJob {
   noCharge?: boolean;
   recallForId?: number | null;
   warrantyId?: number | null;
+  createdFromEstimateId?: number | null;
 }
 
 interface StJobType {
@@ -205,6 +207,7 @@ function isOpportunity(
 ): boolean {
   if (j.recallForId != null) return false;
   if (j.warrantyId != null) return false;
+  if (j.createdFromEstimateId != null) return false;
   const s = jobTypeSettings(j, typeMap);
   if (s.noCharge) return false;
   if (!j.noCharge) return true;
@@ -223,6 +226,7 @@ function isClosedOpportunity(
   soldByJob: Map<number, number>,
 ): boolean {
   if (j.recallForId != null) return false;
+  if (j.createdFromEstimateId != null) return false;
   if (j.warrantyId != null) return false;
   const s = jobTypeSettings(j, typeMap);
   if (s.noCharge) return false;
@@ -413,10 +417,11 @@ export async function syncJobs(
 
     // Counts for the recall/warranty exclusion — used to verify the new
     // code is actually running in prod vs a stale deploy.
-    let recallExcluded = 0, warrantyExcluded = 0;
+    let recallExcluded = 0, warrantyExcluded = 0, createdFromEstExcluded = 0;
     for (const j of jobs) {
       if (j.recallForId != null) recallExcluded++;
       if (j.warrantyId != null) warrantyExcluded++;
+      if (j.createdFromEstimateId != null) createdFromEstExcluded++;
     }
 
     const oppsByType = Array.from(byType.entries())
@@ -444,6 +449,7 @@ export async function syncJobs(
         soldEstimatesMatched: soldMatched,
         recallFlagged: recallExcluded,
         warrantyFlagged: warrantyExcluded,
+        createdFromEstimateFlagged: createdFromEstExcluded,
         oppsByType,
       },
     };
