@@ -10,6 +10,7 @@ import { and, eq, gte, lte, sql, desc } from 'drizzle-orm';
 import { db } from '@/db/client';
 import {
   departments,
+  estimateAnalysis,
   financialDaily,
   membershipDaily,
   targets,
@@ -288,6 +289,24 @@ export async function GET(req: NextRequest) {
   const memLy = await membershipActiveAsOf(period.ly.to);
   const memLy2 = await membershipActiveAsOf(period.ly2.to);
 
+  // Unsold estimates — snapshot, not window-bound. Sum subtotal_cents where
+  // opportunity_status='unsold', grouped by department_code.
+  const unsoldByDeptRows = await database
+    .select({
+      departmentCode: estimateAnalysis.departmentCode,
+      total: sql<number>`COALESCE(SUM(subtotal_cents), 0)::bigint`,
+    })
+    .from(estimateAnalysis)
+    .where(eq(estimateAnalysis.opportunityStatus, 'unsold'))
+    .groupBy(estimateAnalysis.departmentCode);
+  const unsoldByDept = new Map<string, number>();
+  let unsoldTotal = 0;
+  for (const r of unsoldByDeptRows) {
+    const cents = Number(r.total);
+    unsoldTotal += cents;
+    if (r.departmentCode) unsoldByDept.set(r.departmentCode, cents);
+  }
+
   const body: FinancialResponse = {
     total: {
       revenue: compareValue(totalCur, totalLy, totalLy2, 'cents'),
@@ -318,8 +337,15 @@ export async function GET(req: NextRequest) {
       memberships: compareValue(memActive, memLy, memLy2, 'count'),
     },
     potential: {
-      total: 0,
-      byDept: [],
+      total: unsoldTotal,
+      byDept: deptList
+        .map((d) => ({
+          code: d.code,
+          name: d.name,
+          value: unsoldByDept.get(d.code) ?? 0,
+        }))
+        .filter((d) => d.value > 0)
+        .sort((a, b) => b.value - a.value),
     },
     meta: {
       period: period.preset ? period.preset.toUpperCase() : 'Custom',
