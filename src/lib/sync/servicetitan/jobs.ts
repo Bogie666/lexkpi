@@ -73,6 +73,9 @@ export interface JobsSyncResult {
     oppsAllowNoChargeIfSold?: number;
     // All filters off + noCharge types let through if sold-subtotal ≥ threshold.
     oppsAllowNoChargeIfSoldNoExtraFilters?: number;
+    // Same, but ONLY estimates whose soldOn falls inside the window count.
+    oppsAllowNoChargeIfSoldInWindow?: number;
+    oppsAllowNoChargeIfSoldInWindowNoExtraFilters?: number;
     // Per-jobType breakdown of opps. Sorted by descending opp count so the
     // biggest contributors to overcounting surface first. Useful for
     // reconciling against ST's report.
@@ -109,6 +112,7 @@ interface StEstimate {
   id: number;
   jobId?: number | null;
   subtotal?: number | string | null;
+  soldOn?: string | null;
 }
 
 interface JobTypeSettings {
@@ -138,10 +142,18 @@ function estimateSubtotalCents(e: StEstimate): number {
   return Math.round(n * 100);
 }
 
+interface SoldEstimateMaps {
+  /** Max sold subtotal per job, over the full 180-day lookback. */
+  anyLookback: Map<number, number>;
+  /** Max sold subtotal per job, limited to estimates sold within window. */
+  inWindow: Map<number, number>;
+}
+
 /**
  * Pull every sold estimate in a window around the jobs window, then build
- * a map of jobId → max sold-estimate subtotal (cents). Jobs missing from
- * the map have never had a sold estimate above the lookback window.
+ * two maps of jobId → max sold-estimate subtotal (cents):
+ *   - anyLookback: full 180-day window (old behavior)
+ *   - inWindow: only estimates whose soldOn falls inside [from, to]
  *
  * We rely on the server-side status=Sold filter; no client-side
  * re-check on the status field because ST returns it as a typed
@@ -149,7 +161,7 @@ function estimateSubtotalCents(e: StEstimate): number {
  */
 async function loadSoldEstimateSubtotals(
   window: SyncWindow,
-): Promise<Map<number, number>> {
+): Promise<SoldEstimateMaps> {
   const soldAfter = `${shiftDate(window.from, -ESTIMATE_LOOKBACK_DAYS)}T00:00:00Z`;
   const soldBefore = `${window.to}T23:59:59Z`;
   const estimates = await collectResource<StEstimate>({
@@ -160,14 +172,23 @@ async function loadSoldEstimateSubtotals(
       soldBefore,
     },
   });
-  const map = new Map<number, number>();
+  const anyLookback = new Map<number, number>();
+  const inWindow = new Map<number, number>();
   for (const e of estimates) {
     if (!e.jobId) continue;
     const cents = estimateSubtotalCents(e);
-    const prior = map.get(e.jobId) ?? 0;
-    if (cents > prior) map.set(e.jobId, cents);
+    const prior = anyLookback.get(e.jobId) ?? 0;
+    if (cents > prior) anyLookback.set(e.jobId, cents);
+    // Is this particular estimate's soldOn within the window?
+    if (e.soldOn) {
+      const day = e.soldOn.slice(0, 10);
+      if (day >= window.from && day <= window.to) {
+        const priorIn = inWindow.get(e.jobId) ?? 0;
+        if (cents > priorIn) inWindow.set(e.jobId, cents);
+      }
+    }
   }
-  return map;
+  return { anyLookback, inWindow };
 }
 
 /**
@@ -331,11 +352,13 @@ export async function syncJobs(
   let dropped = 0;
 
   try {
-    const [buToDept, jobTypeMap, soldByJob] = await Promise.all([
+    const [buToDept, jobTypeMap, soldMaps] = await Promise.all([
       loadBuToDeptMap(),
       loadJobTypeSettings(),
       loadSoldEstimateSubtotals(window),
     ]);
+    const soldByJob = soldMaps.anyLookback;
+    const soldByJobInWindow = soldMaps.inWindow;
 
     // Pull all completed jobs in the window.
     const jobs = await collectResource<StJob>({
@@ -456,7 +479,9 @@ export async function syncJobs(
         oppsNoCreatedFromEst = 0,
         oppsNoExtraFilters = 0,
         oppsAllowNoChargeIfSold = 0,
-        oppsAllowNoChargeIfSoldAllFlags = 0;
+        oppsAllowNoChargeIfSoldAllFlags = 0,
+        oppsAllowNoChargeIfSoldInWindow = 0,
+        oppsAllowNoChargeIfSoldInWindowNoExtra = 0;
     for (const j of jobs) {
       if (j.recallForId != null) recallExcluded++;
       if (j.warrantyId != null) warrantyExcluded++;
@@ -489,6 +514,20 @@ export async function syncJobs(
           allowNoChargeTypeIfSold: true,
         })
       ) oppsAllowNoChargeIfSoldAllFlags++;
+      // Same "allow noCharge if sold" rule but restricted to estimates
+      // whose soldOn falls INSIDE the report window. Hypothesis: this is
+      // ST's SalesOpportunity rule for installs.
+      if (isOpportunity(j, jobTypeMap, soldByJobInWindow, { allowNoChargeTypeIfSold: true })) {
+        oppsAllowNoChargeIfSoldInWindow++;
+      }
+      if (
+        isOpportunity(j, jobTypeMap, soldByJobInWindow, {
+          skipRecall: true,
+          skipWarranty: true,
+          skipCreatedFromEstimate: true,
+          allowNoChargeTypeIfSold: true,
+        })
+      ) oppsAllowNoChargeIfSoldInWindowNoExtra++;
     }
 
     const oppsByType = Array.from(byType.entries())
@@ -523,6 +562,8 @@ export async function syncJobs(
         oppsNoExtraFilters: oppsNoExtraFilters,
         oppsAllowNoChargeIfSold,
         oppsAllowNoChargeIfSoldNoExtraFilters: oppsAllowNoChargeIfSoldAllFlags,
+        oppsAllowNoChargeIfSoldInWindow,
+        oppsAllowNoChargeIfSoldInWindowNoExtraFilters: oppsAllowNoChargeIfSoldInWindowNoExtra,
         oppsByType,
       },
     };
