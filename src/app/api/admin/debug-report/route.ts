@@ -283,8 +283,7 @@ export async function GET(req: NextRequest) {
       fieldsReturned: result.fields,
       rowCount: result.data?.length ?? 0,
       totalCount: result.totalCount ?? null,
-      // Only include first few rows so we don't blow the payload
-      sampleRows: (result.data ?? []).slice(0, 10),
+      rows: result.data ?? [],
     });
   } catch (err) {
     return NextResponse.json(
