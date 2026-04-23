@@ -89,7 +89,7 @@ async function findReport(
   for (const cat of cats) {
     let page = 1;
     while (true) {
-      const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-categories/${cat.id}/reports?page=${page}&pageSize=500`;
+      const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-category/${cat.id}/reports?page=${page}&pageSize=500`;
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -115,7 +115,7 @@ async function fetchReportDefinition(
   reportId: string,
 ): Promise<StReportDefinition> {
   const cfg = readStConfig();
-  const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-categories/${categoryId}/reports/${reportId}`;
+  const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-category/${categoryId}/reports/${reportId}`;
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -134,7 +134,7 @@ async function runReport(
   parameters: Array<{ name: string; value: unknown }>,
 ): Promise<StReportDataPage> {
   const cfg = readStConfig();
-  const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-categories/${categoryId}/reports/${reportId}/data?pageSize=5000`;
+  const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-category/${categoryId}/reports/${reportId}/data?pageSize=5000`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -169,7 +169,9 @@ export async function GET(req: NextRequest) {
         const reports: Array<{ id: string; name: string | undefined }> = [];
         let page = 1;
         while (true) {
-          const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-categories/${cat.id}/reports?page=${page}&pageSize=500`;
+          // ST uses /report-category/{id}/reports (singular) as of v2, not
+          // /report-categories/{id}/reports.
+          const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-category/${cat.id}/reports?page=${page}&pageSize=500`;
           const res = await fetch(url, {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -177,7 +179,11 @@ export async function GET(req: NextRequest) {
               Accept: 'application/json',
             },
           });
-          if (!res.ok) break;
+          if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            reports.push({ id: '__ERROR__', name: `HTTP ${res.status}: ${body.slice(0, 200)}` });
+            break;
+          }
           const json = (await res.json()) as StReportListPage;
           for (const r of json.data ?? []) {
             const name = r.name ?? '';
