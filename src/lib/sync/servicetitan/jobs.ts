@@ -315,8 +315,12 @@ export async function syncJobs(
     const jobs = await collectResource<StJob>({
       path: '/jpm/v2/tenant/{tenant}/jobs',
       query: {
+        // NB: ST's /jpm/v2/jobs accepts `completedOnOrAfter` but silently
+        // ignores `completedOnOrBefore`. The upper bound is `completedBefore`
+        // (exclusive). We pass the day AFTER window.to so the upper bound
+        // stays inclusive at the caller's expectation.
         completedOnOrAfter: `${window.from}T00:00:00Z`,
-        completedOnOrBefore: `${window.to}T23:59:59Z`,
+        completedBefore: `${shiftDate(window.to, 1)}T00:00:00Z`,
         jobStatus: 'Completed',
       },
     });

@@ -39,6 +39,13 @@ export async function GET(req: NextRequest) {
   const from = req.nextUrl.searchParams.get('from');
   const to = req.nextUrl.searchParams.get('to');
 
+  // ST's /jpm/v2/jobs ignores `completedOnOrBefore` silently. The upper
+  // bound filter is `completedBefore` (exclusive). Pass the day after
+  // the caller's `to` so the effective window stays inclusive.
+  const completedBeforeParam = to
+    ? new Date(Date.parse(`${to}T00:00:00Z`) + 86_400_000).toISOString()
+    : undefined;
+
   try {
     if (singleId) {
       const record = await fetchResourcePage<StJob>({
@@ -54,7 +61,7 @@ export async function GET(req: NextRequest) {
       path: '/jpm/v2/tenant/{tenant}/jobs',
       query: {
         completedOnOrAfter: from ? `${from}T00:00:00Z` : undefined,
-        completedOnOrBefore: to ? `${to}T23:59:59Z` : undefined,
+        completedBefore: completedBeforeParam,
         jobStatus: 'Completed',
       },
       pageSize: 500,
@@ -80,7 +87,7 @@ export async function GET(req: NextRequest) {
       path: '/jpm/v2/tenant/{tenant}/jobs',
       query: {
         completedOnOrAfter: from ? `${from}T00:00:00Z` : undefined,
-        completedOnOrBefore: to ? `${to}T23:59:59Z` : undefined,
+        completedBefore: completedBeforeParam,
         jobStatus: 'Completed',
       },
       pageSize: 500,
