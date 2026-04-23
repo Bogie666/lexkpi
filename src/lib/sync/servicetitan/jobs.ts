@@ -76,6 +76,15 @@ export interface JobsSyncResult {
     // Same, but ONLY estimates whose soldOn falls inside the window count.
     oppsAllowNoChargeIfSoldInWindow?: number;
     oppsAllowNoChargeIfSoldInWindowNoExtraFilters?: number;
+    /** Per-BU breakdown. Includes BUs that are mapped to a dept AND BUs we
+     *  drop. Lets us diff directly against ST's per-BU reports. */
+    oppsByBu?: Array<{
+      buId: number;
+      name: string;
+      jobs: number;
+      opps: number;
+      closed: number;
+    }>;
     // Per-jobType breakdown of opps. Sorted by descending opp count so the
     // biggest contributors to overcounting surface first. Useful for
     // reconciling against ST's report.
@@ -309,6 +318,14 @@ async function loadBuToDeptMap(): Promise<Map<number, string | null>> {
   return new Map(rows.map((r) => [r.id, r.departmentCode]));
 }
 
+async function loadBuNameMap(): Promise<Map<number, string>> {
+  const database = db();
+  const rows = await database
+    .select({ id: businessUnits.id, name: businessUnits.name })
+    .from(businessUnits);
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
 async function purgeSeedRowsForWindow(window: SyncWindow): Promise<number> {
   const database = db();
   const res = await database
@@ -352,8 +369,9 @@ export async function syncJobs(
   let dropped = 0;
 
   try {
-    const [buToDept, jobTypeMap, soldMaps] = await Promise.all([
+    const [buToDept, buNames, jobTypeMap, soldMaps] = await Promise.all([
       loadBuToDeptMap(),
+      loadBuNameMap(),
       loadJobTypeSettings(),
       loadSoldEstimateSubtotals(window),
     ]);
@@ -383,13 +401,32 @@ export async function syncJobs(
     // Per-jobType breakdown — used for the diagnostic on opps overcounting.
     type TypeStats = { name: string; jobs: number; opps: number; closed: number };
     const byType = new Map<number, TypeStats>();
+    // Per-BU breakdown — computed for EVERY job (even those we drop for
+    // dept-mapping reasons) so we can diff directly against ST's per-BU
+    // report, which groups by the same field.
+    type BuStats = { name: string; jobs: number; opps: number; closed: number };
+    const byBu = new Map<number, BuStats>();
     for (const j of jobs) {
+      const buId = j.businessUnitId;
+      const opp = isOpportunity(j, jobTypeMap, soldByJob);
+      const closed = isClosedOpportunity(j, jobTypeMap, soldByJob);
+
+      // BU-level stats: include every job with a BU, regardless of
+      // dept-mapping outcome, so totals line up with ST's per-BU report.
+      if (buId) {
+        const name = buNames.get(buId) ?? `bu#${buId}`;
+        if (!byBu.has(buId)) byBu.set(buId, { name, jobs: 0, opps: 0, closed: 0 });
+        const bs = byBu.get(buId)!;
+        bs.jobs += 1;
+        if (opp) bs.opps += 1;
+        if (closed) bs.closed += 1;
+      }
+
       const date = dateOf(j);
       if (!date) {
         dropped++;
         continue;
       }
-      const buId = j.businessUnitId;
       if (!buId) {
         dropped++;
         continue;
@@ -408,8 +445,6 @@ export async function syncJobs(
       if (!agg.has(key)) agg.set(key, { dept, date, jobs: 0, opps: 0, closedOpps: 0 });
       const entry = agg.get(key)!;
       entry.jobs += 1;
-      const opp = isOpportunity(j, jobTypeMap, soldByJob);
-      const closed = isClosedOpportunity(j, jobTypeMap, soldByJob);
       if (opp) entry.opps += 1;
       if (closed) entry.closedOpps += 1;
 
@@ -541,6 +576,16 @@ export async function syncJobs(
       .filter((r) => r.opps > 0)
       .sort((a, b) => b.opps - a.opps);
 
+    const oppsByBu = Array.from(byBu.entries())
+      .map(([buId, s]) => ({
+        buId,
+        name: s.name,
+        jobs: s.jobs,
+        opps: s.opps,
+        closed: s.closed,
+      }))
+      .sort((a, b) => b.jobs - a.jobs);
+
     return {
       runId,
       jobsFetched: fetched,
@@ -565,6 +610,7 @@ export async function syncJobs(
         oppsAllowNoChargeIfSoldInWindow,
         oppsAllowNoChargeIfSoldInWindowNoExtraFilters: oppsAllowNoChargeIfSoldInWindowNoExtra,
         oppsByType,
+        oppsByBu,
       },
     };
   } catch (err) {
