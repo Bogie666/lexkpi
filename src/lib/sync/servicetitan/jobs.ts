@@ -63,6 +63,12 @@ export interface JobsSyncResult {
     recallFlagged: number; // jobs in window with recallForId != null (diagnostic)
     warrantyFlagged: number; // jobs in window with warrantyId != null (diagnostic)
     createdFromEstimateFlagged: number; // jobs in window with createdFromEstimateId != null (diagnostic)
+    // Counter-factual opp counts: what our opp total would be if each
+    // filter were removed. Used to localize ST-vs-dashboard gaps.
+    oppsNoRecallFilter?: number;
+    oppsNoWarrantyFilter?: number;
+    oppsNoCreatedFromEstimateFilter?: number;
+    oppsNoExtraFilters?: number;
     // Per-jobType breakdown of opps. Sorted by descending opp count so the
     // biggest contributors to overcounting surface first. Useful for
     // reconciling against ST's report.
@@ -200,14 +206,21 @@ function soldSubtotalForJob(j: StJob, soldByJob: Map<number, number>): number {
  *     unless a sold estimate subtotal ≥ threshold exists
  *   - Otherwise → counts as a sales opportunity
  */
+interface OppFlags {
+  skipRecall?: boolean;
+  skipWarranty?: boolean;
+  skipCreatedFromEstimate?: boolean;
+}
+
 function isOpportunity(
   j: StJob,
   typeMap: Map<number, JobTypeSettings>,
   soldByJob: Map<number, number>,
+  flags: OppFlags = {},
 ): boolean {
-  if (j.recallForId != null) return false;
-  if (j.warrantyId != null) return false;
-  if (j.createdFromEstimateId != null) return false;
+  if (!flags.skipRecall && j.recallForId != null) return false;
+  if (!flags.skipWarranty && j.warrantyId != null) return false;
+  if (!flags.skipCreatedFromEstimate && j.createdFromEstimateId != null) return false;
   const s = jobTypeSettings(j, typeMap);
   if (s.noCharge) return false;
   if (!j.noCharge) return true;
@@ -422,10 +435,34 @@ export async function syncJobs(
     // Counts for the recall/warranty exclusion — used to verify the new
     // code is actually running in prod vs a stale deploy.
     let recallExcluded = 0, warrantyExcluded = 0, createdFromEstExcluded = 0;
+    // Counter-factual opp counts — opps we'd have if each filter were
+    // removed (individually or all three). Used to pin down which filter
+    // is driving the gap vs ST's numbers.
+    let oppsNoRecall = 0,
+        oppsNoWarranty = 0,
+        oppsNoCreatedFromEst = 0,
+        oppsNoExtraFilters = 0;
     for (const j of jobs) {
       if (j.recallForId != null) recallExcluded++;
       if (j.warrantyId != null) warrantyExcluded++;
       if (j.createdFromEstimateId != null) createdFromEstExcluded++;
+      // Same dept-mapping gate as the main agg loop — only count jobs that
+      // would actually land in a dept row.
+      const buId = j.businessUnitId;
+      if (!buId || !buToDept.has(buId)) continue;
+      const dept = buToDept.get(buId);
+      if (!dept) continue;
+      if (!dateOf(j)) continue;
+      if (isOpportunity(j, jobTypeMap, soldByJob, { skipRecall: true })) oppsNoRecall++;
+      if (isOpportunity(j, jobTypeMap, soldByJob, { skipWarranty: true })) oppsNoWarranty++;
+      if (isOpportunity(j, jobTypeMap, soldByJob, { skipCreatedFromEstimate: true })) oppsNoCreatedFromEst++;
+      if (
+        isOpportunity(j, jobTypeMap, soldByJob, {
+          skipRecall: true,
+          skipWarranty: true,
+          skipCreatedFromEstimate: true,
+        })
+      ) oppsNoExtraFilters++;
     }
 
     const oppsByType = Array.from(byType.entries())
@@ -454,6 +491,10 @@ export async function syncJobs(
         recallFlagged: recallExcluded,
         warrantyFlagged: warrantyExcluded,
         createdFromEstimateFlagged: createdFromEstExcluded,
+        oppsNoRecallFilter: oppsNoRecall,
+        oppsNoWarrantyFilter: oppsNoWarranty,
+        oppsNoCreatedFromEstimateFilter: oppsNoCreatedFromEst,
+        oppsNoExtraFilters: oppsNoExtraFilters,
         oppsByType,
       },
     };
