@@ -80,6 +80,8 @@ interface StJob {
   businessUnitId?: number | null;
   jobTypeId?: number | null;
   noCharge?: boolean;
+  recallForId?: number | null;
+  warrantyId?: number | null;
 }
 
 interface StJobType {
@@ -180,24 +182,27 @@ function soldSubtotalForJob(j: StJob, soldByJob: Map<number, number>): number {
 }
 
 /**
- * ST's job-type-level `noCharge` flag marks fulfillment / follow-up work
- * (Install, Recall, Quality Control, Follow Up, etc.) — these are never
- * sales opportunities, since the sale already happened at estimate time.
- * The per-job noCharge flag is a softer signal: a one-off non-charged
- * job that can still count as an opp if a sold estimate above threshold
- * was attached.
+ * Matches ST's "Sales Opportunity" column (not "Opportunity"). The former
+ * additionally excludes recall and warranty jobs. Empirical check from the
+ * Ryan New Revenue report for 2026-04-01..22:
+ *   Opportunity 1022, SalesOpportunity 958, RecallJobs 26, WarrantyJobs 41
+ *   → 1022 - 26 - 41 = 955 ≈ 958 (small rounding within ST).
  *
  * Rule:
- *   - jobType.noCharge === true → always excluded (no threshold override)
+ *   - jobType.noCharge === true → always excluded (fulfillment / follow-up)
+ *   - recallForId !== null       → always excluded (recall, not a new opp)
+ *   - warrantyId !== null        → always excluded (warranty, not a new opp)
  *   - job.noCharge === true, but jobType is charge-eligible → excluded
- *     unless a sold estimate subtotal ≥ threshold
- *   - Otherwise → always counted as an opportunity
+ *     unless a sold estimate subtotal ≥ threshold exists
+ *   - Otherwise → counts as a sales opportunity
  */
 function isOpportunity(
   j: StJob,
   typeMap: Map<number, JobTypeSettings>,
   soldByJob: Map<number, number>,
 ): boolean {
+  if (j.recallForId != null) return false;
+  if (j.warrantyId != null) return false;
   const s = jobTypeSettings(j, typeMap);
   if (s.noCharge) return false;
   if (!j.noCharge) return true;
@@ -207,13 +212,16 @@ function isOpportunity(
 /**
  * Closed Opportunity: must be a counted opportunity AND have a sold
  * estimate subtotal ≥ the job type's soldThreshold. Never fires for
- * fulfillment types since they aren't opportunities to begin with.
+ * fulfillment, recall, or warranty jobs — they aren't opportunities
+ * to begin with.
  */
 function isClosedOpportunity(
   j: StJob,
   typeMap: Map<number, JobTypeSettings>,
   soldByJob: Map<number, number>,
 ): boolean {
+  if (j.recallForId != null) return false;
+  if (j.warrantyId != null) return false;
   const s = jobTypeSettings(j, typeMap);
   if (s.noCharge) return false;
   return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
