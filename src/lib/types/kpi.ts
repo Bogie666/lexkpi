@@ -44,8 +44,13 @@ export interface FinancialResponse {
     memberships: CompareValue;
   };
   potential: {
+    /** Total unsold subtotal in the last 30 days (hot + warm). */
     total: number;
-    byDept: Array<{ code: string; name: string; value: number }>;
+    /** ≤7 days old — hot pipeline, team should follow up this week. */
+    hot: number;
+    /** 8–30 days old — warm, still actionable with a callback. */
+    warm: number;
+    byDept: Array<{ code: string; name: string; hot: number; warm: number }>;
   };
   meta: {
     period: string;

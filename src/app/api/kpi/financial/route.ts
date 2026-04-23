@@ -289,23 +289,37 @@ export async function GET(req: NextRequest) {
   const memLy = await membershipActiveAsOf(period.ly.to);
   const memLy2 = await membershipActiveAsOf(period.ly2.to);
 
-  // Unsold estimates — snapshot, not window-bound. Sum subtotal_cents where
-  // opportunity_status='unsold', grouped by department_code.
+  // Unsold estimates — actionable pipeline, last 30 days only.
+  // Split by age: 'hot' = created ≤ 7 days ago, 'warm' = 8–30 days ago.
+  // Older than 30 is dropped — stale estimates rarely convert.
+  const today = new Date().toISOString().slice(0, 10);
+  const sevenAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const thirtyAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
   const unsoldByDeptRows = await database
     .select({
       departmentCode: estimateAnalysis.departmentCode,
-      total: sql<number>`COALESCE(SUM(subtotal_cents), 0)::bigint`,
+      hot: sql<number>`COALESCE(SUM(subtotal_cents) FILTER (WHERE created_on > ${sevenAgo}::date), 0)::bigint`,
+      warm: sql<number>`COALESCE(SUM(subtotal_cents) FILTER (WHERE created_on <= ${sevenAgo}::date AND created_on >= ${thirtyAgo}::date), 0)::bigint`,
     })
     .from(estimateAnalysis)
-    .where(eq(estimateAnalysis.opportunityStatus, 'unsold'))
+    .where(
+      and(
+        eq(estimateAnalysis.opportunityStatus, 'unsold'),
+        gte(estimateAnalysis.createdOn, thirtyAgo),
+        lte(estimateAnalysis.createdOn, today),
+      ),
+    )
     .groupBy(estimateAnalysis.departmentCode);
-  const unsoldByDept = new Map<string, number>();
-  let unsoldTotal = 0;
+  const unsoldByDept = new Map<string, { hot: number; warm: number }>();
+  let unsoldHotTotal = 0, unsoldWarmTotal = 0;
   for (const r of unsoldByDeptRows) {
-    const cents = Number(r.total);
-    unsoldTotal += cents;
-    if (r.departmentCode) unsoldByDept.set(r.departmentCode, cents);
+    const hot = Number(r.hot);
+    const warm = Number(r.warm);
+    unsoldHotTotal += hot;
+    unsoldWarmTotal += warm;
+    if (r.departmentCode) unsoldByDept.set(r.departmentCode, { hot, warm });
   }
+  const unsoldTotal = unsoldHotTotal + unsoldWarmTotal;
 
   const body: FinancialResponse = {
     total: {
@@ -338,14 +352,15 @@ export async function GET(req: NextRequest) {
     },
     potential: {
       total: unsoldTotal,
+      hot: unsoldHotTotal,
+      warm: unsoldWarmTotal,
       byDept: deptList
-        .map((d) => ({
-          code: d.code,
-          name: d.name,
-          value: unsoldByDept.get(d.code) ?? 0,
-        }))
-        .filter((d) => d.value > 0)
-        .sort((a, b) => b.value - a.value),
+        .map((d) => {
+          const v = unsoldByDept.get(d.code) ?? { hot: 0, warm: 0 };
+          return { code: d.code, name: d.name, hot: v.hot, warm: v.warm };
+        })
+        .filter((d) => d.hot + d.warm > 0)
+        .sort((a, b) => (b.hot + b.warm) - (a.hot + a.warm)),
     },
     meta: {
       period: period.preset ? period.preset.toUpperCase() : 'Custom',
