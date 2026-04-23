@@ -59,7 +59,24 @@ async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: s
     ADD COLUMN IF NOT EXISTS closed_opportunities integer NOT NULL DEFAULT 0
   `;
 
-  return { tablesEnsured: ['business_units'], columnsEnsured: ['financial_daily.closed_opportunities'] };
+  // job_id column added to estimate_analysis for the Estimates sync.
+  // Needed so we can group good/better/best estimates left on the same job
+  // and average them (instead of summing triple-counted pipeline).
+  await sql`
+    ALTER TABLE estimate_analysis
+    ADD COLUMN IF NOT EXISTS job_id bigint
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS ea_job_idx ON estimate_analysis (job_id)
+  `;
+
+  return {
+    tablesEnsured: ['business_units'],
+    columnsEnsured: [
+      'financial_daily.closed_opportunities',
+      'estimate_analysis.job_id',
+    ],
+  };
 }
 
 /**

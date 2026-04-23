@@ -115,6 +115,11 @@ export const estimateAnalysis = pgTable(
   {
     id: serial('id').primaryKey(),
     estimateId: text('estimate_id').notNull().unique(),
+    // ST jobId the estimate is attached to. Nullable: seeded rows and
+    // standalone estimates don't have one. Techs leave good/better/best
+    // sets per job, so we group by jobId and average when rolling up to
+    // avoid triple-counting a single customer's pipeline.
+    jobId: bigint('job_id', { mode: 'number' }),
     opportunityStatus: text('opportunity_status').notNull(), // 'won' | 'unsold' | 'dismissed'
     soldOn: date('sold_on'),
     createdOn: date('created_on').notNull(),
@@ -129,6 +134,7 @@ export const estimateAnalysis = pgTable(
     createdIdx: index('ea_created_idx').on(t.createdOn),
     statusIdx: index('ea_status_idx').on(t.opportunityStatus),
     deptIdx: index('ea_dept_idx').on(t.departmentCode),
+    jobIdx: index('ea_job_idx').on(t.jobId),
   }),
 );
 

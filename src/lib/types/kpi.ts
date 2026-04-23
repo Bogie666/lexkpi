@@ -44,12 +44,15 @@ export interface FinancialResponse {
     memberships: CompareValue;
   };
   potential: {
-    /** Total unsold subtotal in the last 30 days (hot + warm). */
+    /** Total averaged unsold pipeline in the last 30 days (hot + warm). */
     total: number;
     /** ≤7 days old — hot pipeline, team should follow up this week. */
     hot: number;
     /** 8–30 days old — warm, still actionable with a callback. */
     warm: number;
+    /** Number of distinct jobs (customers) contributing to the pipeline.
+     *  Multiple estimates on the same job are averaged into one. */
+    jobCount: number;
     byDept: Array<{ code: string; name: string; hot: number; warm: number }>;
   };
   meta: {

@@ -22,6 +22,10 @@ export function PotentialRevenuePanel({ data }: { data: FinancialResponse }) {
         <div className="flex flex-col gap-2">
           <div className="text-eyebrow uppercase text-muted">Total</div>
           <div className="text-kpi font-mono tabular-nums">{fmtMoney(potential.total)}</div>
+          <div className="text-[12px] text-muted font-mono tabular-nums">
+            across {potential.jobCount} open opportunit{potential.jobCount === 1 ? 'y' : 'ies'}
+            <span className="text-muted/60"> · avg per job</span>
+          </div>
           <div className="flex items-center gap-4 text-[12px] font-mono tabular-nums">
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />

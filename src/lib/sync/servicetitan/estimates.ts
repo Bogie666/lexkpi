@@ -168,6 +168,7 @@ export async function syncEstimates(
       const dept = buToDept.get(buId) ?? null;
       rows.push({
         estimateId: String(e.id),
+        jobId: e.jobId,
         opportunityStatus: 'unsold',
         soldOn: null,
         createdOn: createdOnDate(e),
@@ -195,6 +196,7 @@ export async function syncEstimates(
           .onConflictDoUpdate({
             target: estimateAnalysis.estimateId,
             set: {
+              jobId: sql.raw(`excluded.job_id`),
               opportunityStatus: sql.raw(`excluded.opportunity_status`),
               subtotalCents: sql.raw(`excluded.subtotal_cents`),
               departmentCode: sql.raw(`excluded.department_code`),

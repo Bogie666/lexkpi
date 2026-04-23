@@ -292,32 +292,53 @@ export async function GET(req: NextRequest) {
   // Unsold estimates — actionable pipeline, last 30 days only.
   // Split by age: 'hot' = created ≤ 7 days ago, 'warm' = 8–30 days ago.
   // Older than 30 is dropped — stale estimates rarely convert.
-  const today = new Date().toISOString().slice(0, 10);
+  //
+  // Techs leave good/better/best per job, so we first collapse to one
+  // row per (jobId, dept) using the MIN(created_on) for age bucketing
+  // and AVG(subtotal_cents) for dollar value. Then we bucket those
+  // averaged rows into hot/warm and sum per dept. Estimates with no
+  // jobId (standalone) are deduplicated by estimateId.
   const sevenAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
   const thirtyAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
-  const unsoldByDeptRows = await database
-    .select({
-      departmentCode: estimateAnalysis.departmentCode,
-      hot: sql<number>`COALESCE(SUM(subtotal_cents) FILTER (WHERE created_on > ${sevenAgo}::date), 0)::bigint`,
-      warm: sql<number>`COALESCE(SUM(subtotal_cents) FILTER (WHERE created_on <= ${sevenAgo}::date AND created_on >= ${thirtyAgo}::date), 0)::bigint`,
-    })
-    .from(estimateAnalysis)
-    .where(
-      and(
-        eq(estimateAnalysis.opportunityStatus, 'unsold'),
-        gte(estimateAnalysis.createdOn, thirtyAgo),
-        lte(estimateAnalysis.createdOn, today),
-      ),
+  const unsoldByDeptRows = await database.execute<{
+    department_code: string | null;
+    hot: string;
+    warm: string;
+    job_count: string;
+  }>(sql`
+    WITH per_job AS (
+      SELECT
+        COALESCE(job_id::text, 'est:' || estimate_id) AS job_key,
+        department_code,
+        MIN(created_on) AS first_created_on,
+        AVG(subtotal_cents)::bigint AS avg_subtotal_cents
+      FROM estimate_analysis
+      WHERE opportunity_status = 'unsold'
+        AND created_on >= ${thirtyAgo}::date
+      GROUP BY job_key, department_code
     )
-    .groupBy(estimateAnalysis.departmentCode);
+    SELECT
+      department_code,
+      COALESCE(SUM(avg_subtotal_cents) FILTER (WHERE first_created_on > ${sevenAgo}::date), 0)::bigint AS hot,
+      COALESCE(SUM(avg_subtotal_cents) FILTER (WHERE first_created_on <= ${sevenAgo}::date), 0)::bigint AS warm,
+      COUNT(*)::bigint AS job_count
+    FROM per_job
+    GROUP BY department_code
+  `);
   const unsoldByDept = new Map<string, { hot: number; warm: number }>();
-  let unsoldHotTotal = 0, unsoldWarmTotal = 0;
-  for (const r of unsoldByDeptRows) {
+  let unsoldHotTotal = 0, unsoldWarmTotal = 0, unsoldJobCount = 0;
+  for (const r of (unsoldByDeptRows as unknown as Array<{
+    department_code: string | null;
+    hot: string | number;
+    warm: string | number;
+    job_count: string | number;
+  }>)) {
     const hot = Number(r.hot);
     const warm = Number(r.warm);
     unsoldHotTotal += hot;
     unsoldWarmTotal += warm;
-    if (r.departmentCode) unsoldByDept.set(r.departmentCode, { hot, warm });
+    unsoldJobCount += Number(r.job_count);
+    if (r.department_code) unsoldByDept.set(r.department_code, { hot, warm });
   }
   const unsoldTotal = unsoldHotTotal + unsoldWarmTotal;
 
@@ -354,6 +375,7 @@ export async function GET(req: NextRequest) {
       total: unsoldTotal,
       hot: unsoldHotTotal,
       warm: unsoldWarmTotal,
+      jobCount: unsoldJobCount,
       byDept: deptList
         .map((d) => {
           const v = unsoldByDept.get(d.code) ?? { hot: 0, warm: 0 };
