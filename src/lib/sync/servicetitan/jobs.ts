@@ -76,6 +76,9 @@ export interface JobsSyncResult {
     // Same, but ONLY estimates whose soldOn falls inside the window count.
     oppsAllowNoChargeIfSoldInWindow?: number;
     oppsAllowNoChargeIfSoldInWindowNoExtraFilters?: number;
+    /** Simple rule: opp = job.noCharge=false OR sold-subtotal ≥ threshold.
+     *  Ignores jobType.noCharge and all 3 extra filters. */
+    oppsJobNoChargeOnly?: number;
     /** Per-BU breakdown. Includes BUs that are mapped to a dept AND BUs we
      *  drop. Lets us diff directly against ST's per-BU reports. */
     oppsByBu?: Array<{
@@ -250,6 +253,11 @@ interface OppFlags {
   // partially includes noCharge types that happen to have a qualifying
   // sold estimate.
   allowNoChargeTypeIfSold?: boolean;
+  // If true: ignore the jobType.noCharge flag entirely. The only gate is
+  // job.noCharge (with threshold override). Used to model the simple rule
+  // "charge-eligible jobs always count; no-charge jobs only count if sold
+  // subtotal ≥ threshold".
+  ignoreJobTypeNoCharge?: boolean;
 }
 
 function isOpportunity(
@@ -262,7 +270,7 @@ function isOpportunity(
   if (!flags.skipWarranty && j.warrantyId != null) return false;
   if (!flags.skipCreatedFromEstimate && j.createdFromEstimateId != null) return false;
   const s = jobTypeSettings(j, typeMap);
-  if (s.noCharge) {
+  if (!flags.ignoreJobTypeNoCharge && s.noCharge) {
     if (!flags.allowNoChargeTypeIfSold) return false;
     return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
   }
@@ -516,7 +524,8 @@ export async function syncJobs(
         oppsAllowNoChargeIfSold = 0,
         oppsAllowNoChargeIfSoldAllFlags = 0,
         oppsAllowNoChargeIfSoldInWindow = 0,
-        oppsAllowNoChargeIfSoldInWindowNoExtra = 0;
+        oppsAllowNoChargeIfSoldInWindowNoExtra = 0,
+        oppsJobNoChargeOnly = 0;
     for (const j of jobs) {
       if (j.recallForId != null) recallExcluded++;
       if (j.warrantyId != null) warrantyExcluded++;
@@ -563,6 +572,16 @@ export async function syncJobs(
           allowNoChargeTypeIfSold: true,
         })
       ) oppsAllowNoChargeIfSoldInWindowNoExtra++;
+      // Simple rule: "opp if job.noCharge is false OR sold-subtotal >= threshold"
+      // Ignores jobType.noCharge entirely and all three extra filters.
+      if (
+        isOpportunity(j, jobTypeMap, soldByJob, {
+          skipRecall: true,
+          skipWarranty: true,
+          skipCreatedFromEstimate: true,
+          ignoreJobTypeNoCharge: true,
+        })
+      ) oppsJobNoChargeOnly++;
     }
 
     const oppsByType = Array.from(byType.entries())
@@ -609,6 +628,7 @@ export async function syncJobs(
         oppsAllowNoChargeIfSoldNoExtraFilters: oppsAllowNoChargeIfSoldAllFlags,
         oppsAllowNoChargeIfSoldInWindow,
         oppsAllowNoChargeIfSoldInWindowNoExtraFilters: oppsAllowNoChargeIfSoldInWindowNoExtra,
+        oppsJobNoChargeOnly,
         oppsByType,
         oppsByBu,
       },
