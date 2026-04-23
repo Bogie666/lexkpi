@@ -155,8 +155,61 @@ export async function GET(req: NextRequest) {
   }
 
   const reportId = req.nextUrl.searchParams.get('id');
+  const listMode = req.nextUrl.searchParams.get('list') === '1';
+  const nameFilter = req.nextUrl.searchParams.get('name')?.toLowerCase() ?? '';
+
+  // list=1 → dump every category + every report name we can see.
+  if (listMode) {
+    try {
+      const token = await getAccessToken();
+      const cfg = readStConfig();
+      const cats = await listCategories(token);
+      const out: Array<{ categoryId: string; categoryName: string | undefined; reports: Array<{ id: string; name: string | undefined }> }> = [];
+      for (const cat of cats) {
+        const reports: Array<{ id: string; name: string | undefined }> = [];
+        let page = 1;
+        while (true) {
+          const url = `${cfg.apiBase}/reporting/v2/tenant/${cfg.tenantId}/report-categories/${cat.id}/reports?page=${page}&pageSize=500`;
+          const res = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'ST-App-Key': cfg.appKey,
+              Accept: 'application/json',
+            },
+          });
+          if (!res.ok) break;
+          const json = (await res.json()) as StReportListPage;
+          for (const r of json.data ?? []) {
+            const name = r.name ?? '';
+            if (!nameFilter || name.toLowerCase().includes(nameFilter)) {
+              reports.push({ id: String(r.id), name: r.name });
+            }
+          }
+          if (!json.hasMore) break;
+          page++;
+        }
+        if (reports.length > 0 || !nameFilter) {
+          out.push({ categoryId: String(cat.id), categoryName: cat.name, reports });
+        }
+      }
+      return NextResponse.json({
+        ok: true,
+        categoriesScanned: cats.length,
+        matches: out,
+      });
+    } catch (err) {
+      return NextResponse.json(
+        { ok: false, error: err instanceof Error ? err.message : String(err) },
+        { status: 500 },
+      );
+    }
+  }
+
   if (!reportId) {
-    return NextResponse.json({ error: 'id param required' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'id param required (or pass list=1 to dump all categories)' },
+      { status: 400 },
+    );
   }
 
   const shouldRun = req.nextUrl.searchParams.get('run') === '1';
@@ -168,7 +221,7 @@ export async function GET(req: NextRequest) {
     const found = await findReport(token, reportId);
     if (!found) {
       return NextResponse.json(
-        { ok: false, error: `report ${reportId} not found in any category` },
+        { ok: false, error: `report ${reportId} not found in any category`, hint: 'try /api/admin/debug-report?list=1 or ?list=1&name=opportunity' },
         { status: 404 },
       );
     }
