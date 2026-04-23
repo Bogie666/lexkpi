@@ -69,6 +69,10 @@ export interface JobsSyncResult {
     oppsNoWarrantyFilter?: number;
     oppsNoCreatedFromEstimateFilter?: number;
     oppsNoExtraFilters?: number;
+    // With noCharge types let through if sold-subtotal ≥ threshold.
+    oppsAllowNoChargeIfSold?: number;
+    // All filters off + noCharge types let through if sold-subtotal ≥ threshold.
+    oppsAllowNoChargeIfSoldNoExtraFilters?: number;
     // Per-jobType breakdown of opps. Sorted by descending opp count so the
     // biggest contributors to overcounting surface first. Useful for
     // reconciling against ST's report.
@@ -210,6 +214,12 @@ interface OppFlags {
   skipRecall?: boolean;
   skipWarranty?: boolean;
   skipCreatedFromEstimate?: boolean;
+  // If true: noCharge job types are NOT strictly excluded — instead they
+  // pass through the threshold override (sold subtotal ≥ threshold).
+  // Used as a counter-factual to test whether ST's SalesOpportunity metric
+  // partially includes noCharge types that happen to have a qualifying
+  // sold estimate.
+  allowNoChargeTypeIfSold?: boolean;
 }
 
 function isOpportunity(
@@ -222,7 +232,10 @@ function isOpportunity(
   if (!flags.skipWarranty && j.warrantyId != null) return false;
   if (!flags.skipCreatedFromEstimate && j.createdFromEstimateId != null) return false;
   const s = jobTypeSettings(j, typeMap);
-  if (s.noCharge) return false;
+  if (s.noCharge) {
+    if (!flags.allowNoChargeTypeIfSold) return false;
+    return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
+  }
   if (!j.noCharge) return true;
   return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
 }
@@ -441,7 +454,9 @@ export async function syncJobs(
     let oppsNoRecall = 0,
         oppsNoWarranty = 0,
         oppsNoCreatedFromEst = 0,
-        oppsNoExtraFilters = 0;
+        oppsNoExtraFilters = 0,
+        oppsAllowNoChargeIfSold = 0,
+        oppsAllowNoChargeIfSoldAllFlags = 0;
     for (const j of jobs) {
       if (j.recallForId != null) recallExcluded++;
       if (j.warrantyId != null) warrantyExcluded++;
@@ -463,6 +478,17 @@ export async function syncJobs(
           skipCreatedFromEstimate: true,
         })
       ) oppsNoExtraFilters++;
+      if (isOpportunity(j, jobTypeMap, soldByJob, { allowNoChargeTypeIfSold: true })) {
+        oppsAllowNoChargeIfSold++;
+      }
+      if (
+        isOpportunity(j, jobTypeMap, soldByJob, {
+          skipRecall: true,
+          skipWarranty: true,
+          skipCreatedFromEstimate: true,
+          allowNoChargeTypeIfSold: true,
+        })
+      ) oppsAllowNoChargeIfSoldAllFlags++;
     }
 
     const oppsByType = Array.from(byType.entries())
@@ -495,6 +521,8 @@ export async function syncJobs(
         oppsNoWarrantyFilter: oppsNoWarranty,
         oppsNoCreatedFromEstimateFilter: oppsNoCreatedFromEst,
         oppsNoExtraFilters: oppsNoExtraFilters,
+        oppsAllowNoChargeIfSold,
+        oppsAllowNoChargeIfSoldNoExtraFilters: oppsAllowNoChargeIfSoldAllFlags,
         oppsByType,
       },
     };
