@@ -60,25 +60,13 @@ export interface JobsSyncResult {
     closedOpportunities: number;
     closeRatePct: number; // rounded to 2dp
     soldEstimatesMatched: number; // jobs in window with a sold-estimate lookup hit
-    recallFlagged: number; // jobs in window with recallForId != null (diagnostic)
-    warrantyFlagged: number; // jobs in window with warrantyId != null (diagnostic)
-    createdFromEstimateFlagged: number; // jobs in window with createdFromEstimateId != null (diagnostic)
-    // Counter-factual opp counts: what our opp total would be if each
-    // filter were removed. Used to localize ST-vs-dashboard gaps.
-    oppsNoRecallFilter?: number;
-    oppsNoWarrantyFilter?: number;
-    oppsNoCreatedFromEstimateFilter?: number;
-    oppsNoExtraFilters?: number;
-    // With noCharge types let through if sold-subtotal ≥ threshold.
-    oppsAllowNoChargeIfSold?: number;
-    // All filters off + noCharge types let through if sold-subtotal ≥ threshold.
-    oppsAllowNoChargeIfSoldNoExtraFilters?: number;
-    // Same, but ONLY estimates whose soldOn falls inside the window count.
-    oppsAllowNoChargeIfSoldInWindow?: number;
-    oppsAllowNoChargeIfSoldInWindowNoExtraFilters?: number;
-    /** Simple rule: opp = job.noCharge=false OR sold-subtotal ≥ threshold.
-     *  Ignores jobType.noCharge and all 3 extra filters. */
-    oppsJobNoChargeOnly?: number;
+    recallFlagged: number; // jobs in window with recallForId != null
+    warrantyFlagged: number; // jobs in window with warrantyId != null
+    createdFromEstimateFlagged: number; // jobs with createdFromEstimateId != null
+    /** Opps under the legacy strict rule (jobType.noCharge + recall +
+     *  warranty + createdFromEstimate filters all applied). Retained as
+     *  a diagnostic so we can see the delta vs live. */
+    oppsLegacyStrict?: number;
     /** Per-BU breakdown. Includes BUs that are mapped to a dept AND BUs we
      *  drop. Lets us diff directly against ST's per-BU reports. */
     oppsByBu?: Array<{
@@ -243,21 +231,13 @@ function soldSubtotalForJob(j: StJob, soldByJob: Map<number, number>): number {
  *     unless a sold estimate subtotal ≥ threshold exists
  *   - Otherwise → counts as a sales opportunity
  */
+/** Flags for counter-factual opp checks. Flip one on to ADD a stricter
+ *  gate that the live rule doesn't apply. */
 interface OppFlags {
-  skipRecall?: boolean;
-  skipWarranty?: boolean;
-  skipCreatedFromEstimate?: boolean;
-  // If true: noCharge job types are NOT strictly excluded — instead they
-  // pass through the threshold override (sold subtotal ≥ threshold).
-  // Used as a counter-factual to test whether ST's SalesOpportunity metric
-  // partially includes noCharge types that happen to have a qualifying
-  // sold estimate.
-  allowNoChargeTypeIfSold?: boolean;
-  // If true: ignore the jobType.noCharge flag entirely. The only gate is
-  // job.noCharge (with threshold override). Used to model the simple rule
-  // "charge-eligible jobs always count; no-charge jobs only count if sold
-  // subtotal ≥ threshold".
-  ignoreJobTypeNoCharge?: boolean;
+  applyRecallFilter?: boolean;
+  applyWarrantyFilter?: boolean;
+  applyCreatedFromEstimateFilter?: boolean;
+  applyJobTypeNoChargeStrict?: boolean;
 }
 
 function isOpportunity(
@@ -266,34 +246,31 @@ function isOpportunity(
   soldByJob: Map<number, number>,
   flags: OppFlags = {},
 ): boolean {
-  if (!flags.skipRecall && j.recallForId != null) return false;
-  if (!flags.skipWarranty && j.warrantyId != null) return false;
-  if (!flags.skipCreatedFromEstimate && j.createdFromEstimateId != null) return false;
-  const s = jobTypeSettings(j, typeMap);
-  if (!flags.ignoreJobTypeNoCharge && s.noCharge) {
-    if (!flags.allowNoChargeTypeIfSold) return false;
-    return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
+  if (flags.applyRecallFilter && j.recallForId != null) return false;
+  if (flags.applyWarrantyFilter && j.warrantyId != null) return false;
+  if (flags.applyCreatedFromEstimateFilter && j.createdFromEstimateId != null) {
+    return false;
   }
+  const s = jobTypeSettings(j, typeMap);
+  if (flags.applyJobTypeNoChargeStrict && s.noCharge) return false;
   if (!j.noCharge) return true;
   return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
 }
 
 /**
- * Closed Opportunity: must be a counted opportunity AND have a sold
- * estimate subtotal ≥ the job type's soldThreshold. Never fires for
- * fulfillment, recall, or warranty jobs — they aren't opportunities
- * to begin with.
+ * Closed Opportunity: the same eligibility rule as isOpportunity, plus
+ * the requirement that a sold estimate with subtotal ≥ threshold exists.
+ * By design, an opp and a closed-opp use the same filter set so close
+ * rate = closed / opps is internally consistent.
  */
 function isClosedOpportunity(
   j: StJob,
   typeMap: Map<number, JobTypeSettings>,
   soldByJob: Map<number, number>,
+  flags: OppFlags = {},
 ): boolean {
-  if (j.recallForId != null) return false;
-  if (j.createdFromEstimateId != null) return false;
-  if (j.warrantyId != null) return false;
+  if (!isOpportunity(j, typeMap, soldByJob, flags)) return false;
   const s = jobTypeSettings(j, typeMap);
-  if (s.noCharge) return false;
   return soldSubtotalForJob(j, soldByJob) >= s.thresholdCents;
 }
 
@@ -384,7 +361,6 @@ export async function syncJobs(
       loadSoldEstimateSubtotals(window),
     ]);
     const soldByJob = soldMaps.anyLookback;
-    const soldByJobInWindow = soldMaps.inWindow;
 
     // Pull all completed jobs in the window.
     const jobs = await collectResource<StJob>({
@@ -511,77 +487,32 @@ export async function syncJobs(
     let soldMatched = 0;
     for (const j of jobs) if (soldByJob.has(j.id)) soldMatched++;
 
-    // Counts for the recall/warranty exclusion — used to verify the new
-    // code is actually running in prod vs a stale deploy.
-    let recallExcluded = 0, warrantyExcluded = 0, createdFromEstExcluded = 0;
-    // Counter-factual opp counts — opps we'd have if each filter were
-    // removed (individually or all three). Used to pin down which filter
-    // is driving the gap vs ST's numbers.
-    let oppsNoRecall = 0,
-        oppsNoWarranty = 0,
-        oppsNoCreatedFromEst = 0,
-        oppsNoExtraFilters = 0,
-        oppsAllowNoChargeIfSold = 0,
-        oppsAllowNoChargeIfSoldAllFlags = 0,
-        oppsAllowNoChargeIfSoldInWindow = 0,
-        oppsAllowNoChargeIfSoldInWindowNoExtra = 0,
-        oppsJobNoChargeOnly = 0;
+    // Per-flag "how many jobs carry this label" counters — useful for
+    // diagnosing data freshness and sanity-checking ST's report.
+    let recallFlagged = 0, warrantyFlagged = 0, createdFromEstFlagged = 0;
+    // A single diagnostic counter-factual: opps under the legacy "strict"
+    // rule that gated on all four filters at once. Lets us see the delta
+    // vs the live simple rule (1,013 → ~981 for Apr MTD 2026).
+    let oppsLegacyStrict = 0;
     for (const j of jobs) {
-      if (j.recallForId != null) recallExcluded++;
-      if (j.warrantyId != null) warrantyExcluded++;
-      if (j.createdFromEstimateId != null) createdFromEstExcluded++;
-      // Same dept-mapping gate as the main agg loop — only count jobs that
-      // would actually land in a dept row.
+      if (j.recallForId != null) recallFlagged++;
+      if (j.warrantyId != null) warrantyFlagged++;
+      if (j.createdFromEstimateId != null) createdFromEstFlagged++;
       const buId = j.businessUnitId;
       if (!buId || !buToDept.has(buId)) continue;
       const dept = buToDept.get(buId);
       if (!dept) continue;
       if (!dateOf(j)) continue;
-      if (isOpportunity(j, jobTypeMap, soldByJob, { skipRecall: true })) oppsNoRecall++;
-      if (isOpportunity(j, jobTypeMap, soldByJob, { skipWarranty: true })) oppsNoWarranty++;
-      if (isOpportunity(j, jobTypeMap, soldByJob, { skipCreatedFromEstimate: true })) oppsNoCreatedFromEst++;
       if (
         isOpportunity(j, jobTypeMap, soldByJob, {
-          skipRecall: true,
-          skipWarranty: true,
-          skipCreatedFromEstimate: true,
+          applyRecallFilter: true,
+          applyWarrantyFilter: true,
+          applyCreatedFromEstimateFilter: true,
+          applyJobTypeNoChargeStrict: true,
         })
-      ) oppsNoExtraFilters++;
-      if (isOpportunity(j, jobTypeMap, soldByJob, { allowNoChargeTypeIfSold: true })) {
-        oppsAllowNoChargeIfSold++;
+      ) {
+        oppsLegacyStrict++;
       }
-      if (
-        isOpportunity(j, jobTypeMap, soldByJob, {
-          skipRecall: true,
-          skipWarranty: true,
-          skipCreatedFromEstimate: true,
-          allowNoChargeTypeIfSold: true,
-        })
-      ) oppsAllowNoChargeIfSoldAllFlags++;
-      // Same "allow noCharge if sold" rule but restricted to estimates
-      // whose soldOn falls INSIDE the report window. Hypothesis: this is
-      // ST's SalesOpportunity rule for installs.
-      if (isOpportunity(j, jobTypeMap, soldByJobInWindow, { allowNoChargeTypeIfSold: true })) {
-        oppsAllowNoChargeIfSoldInWindow++;
-      }
-      if (
-        isOpportunity(j, jobTypeMap, soldByJobInWindow, {
-          skipRecall: true,
-          skipWarranty: true,
-          skipCreatedFromEstimate: true,
-          allowNoChargeTypeIfSold: true,
-        })
-      ) oppsAllowNoChargeIfSoldInWindowNoExtra++;
-      // Simple rule: "opp if job.noCharge is false OR sold-subtotal >= threshold"
-      // Ignores jobType.noCharge entirely and all three extra filters.
-      if (
-        isOpportunity(j, jobTypeMap, soldByJob, {
-          skipRecall: true,
-          skipWarranty: true,
-          skipCreatedFromEstimate: true,
-          ignoreJobTypeNoCharge: true,
-        })
-      ) oppsJobNoChargeOnly++;
     }
 
     const oppsByType = Array.from(byType.entries())
@@ -617,18 +548,10 @@ export async function syncJobs(
         closedOpportunities: totalClosed,
         closeRatePct,
         soldEstimatesMatched: soldMatched,
-        recallFlagged: recallExcluded,
-        warrantyFlagged: warrantyExcluded,
-        createdFromEstimateFlagged: createdFromEstExcluded,
-        oppsNoRecallFilter: oppsNoRecall,
-        oppsNoWarrantyFilter: oppsNoWarranty,
-        oppsNoCreatedFromEstimateFilter: oppsNoCreatedFromEst,
-        oppsNoExtraFilters: oppsNoExtraFilters,
-        oppsAllowNoChargeIfSold,
-        oppsAllowNoChargeIfSoldNoExtraFilters: oppsAllowNoChargeIfSoldAllFlags,
-        oppsAllowNoChargeIfSoldInWindow,
-        oppsAllowNoChargeIfSoldInWindowNoExtraFilters: oppsAllowNoChargeIfSoldInWindowNoExtra,
-        oppsJobNoChargeOnly,
+        recallFlagged,
+        warrantyFlagged,
+        createdFromEstimateFlagged: createdFromEstFlagged,
+        oppsLegacyStrict,
         oppsByType,
         oppsByBu,
       },
