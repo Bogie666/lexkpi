@@ -293,52 +293,62 @@ export async function GET(req: NextRequest) {
   // Split by age: 'hot' = created ≤ 7 days ago, 'warm' = 8–30 days ago.
   // Older than 30 is dropped — stale estimates rarely convert.
   //
-  // Techs leave good/better/best per job, so we first collapse to one
-  // row per (jobId, dept) using the MIN(created_on) for age bucketing
-  // and AVG(subtotal_cents) for dollar value. Then we bucket those
-  // averaged rows into hot/warm and sum per dept. Estimates with no
-  // jobId (standalone) are deduplicated by estimateId.
-  const sevenAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
-  const thirtyAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
-  const unsoldByDeptRows = await database.execute<{
-    department_code: string | null;
-    hot: string;
-    warm: string;
-    job_count: string;
-  }>(sql`
-    WITH per_job AS (
-      SELECT
-        COALESCE(job_id::text, 'est:' || estimate_id) AS job_key,
-        department_code,
-        MIN(created_on) AS first_created_on,
-        AVG(subtotal_cents)::bigint AS avg_subtotal_cents
-      FROM estimate_analysis
-      WHERE opportunity_status = 'unsold'
-        AND created_on >= ${thirtyAgo}::date
-      GROUP BY job_key, department_code
-    )
-    SELECT
-      department_code,
-      COALESCE(SUM(avg_subtotal_cents) FILTER (WHERE first_created_on > ${sevenAgo}::date), 0)::bigint AS hot,
-      COALESCE(SUM(avg_subtotal_cents) FILTER (WHERE first_created_on <= ${sevenAgo}::date), 0)::bigint AS warm,
-      COUNT(*)::bigint AS job_count
-    FROM per_job
-    GROUP BY department_code
-  `);
+  // Techs leave good/better/best per job, so after fetching raw rows we
+  // group by (jobId-or-estimateId, dept) and average subtotals before
+  // bucketing. Done in JS since the dataset is small and drizzle's SQL
+  // templating gets finicky with conditional-aggregate SQL.
+  const thirtyAgoDate = new Date(Date.now() - 30 * 86_400_000);
+  const thirtyAgo = thirtyAgoDate.toISOString().slice(0, 10);
+  const sevenAgoDate = new Date(Date.now() - 7 * 86_400_000);
+  const unsoldRaw = await database
+    .select({
+      estimateId: estimateAnalysis.estimateId,
+      jobId: estimateAnalysis.jobId,
+      createdOn: estimateAnalysis.createdOn,
+      subtotalCents: estimateAnalysis.subtotalCents,
+      departmentCode: estimateAnalysis.departmentCode,
+    })
+    .from(estimateAnalysis)
+    .where(
+      and(
+        eq(estimateAnalysis.opportunityStatus, 'unsold'),
+        gte(estimateAnalysis.createdOn, thirtyAgo),
+      ),
+    );
+
+  // Collapse to one row per (job-or-estimate, dept): average subtotal,
+  // earliest createdOn for age bucketing.
+  const perJob = new Map<string, { dept: string | null; created: string; sum: number; count: number }>();
+  for (const r of unsoldRaw) {
+    const key = `${r.jobId ?? `est:${r.estimateId}`}|${r.departmentCode ?? ''}`;
+    const existing = perJob.get(key);
+    if (existing) {
+      existing.sum += Number(r.subtotalCents);
+      existing.count += 1;
+      if (r.createdOn < existing.created) existing.created = r.createdOn;
+    } else {
+      perJob.set(key, {
+        dept: r.departmentCode,
+        created: r.createdOn,
+        sum: Number(r.subtotalCents),
+        count: 1,
+      });
+    }
+  }
+
   const unsoldByDept = new Map<string, { hot: number; warm: number }>();
   let unsoldHotTotal = 0, unsoldWarmTotal = 0, unsoldJobCount = 0;
-  for (const r of (unsoldByDeptRows as unknown as Array<{
-    department_code: string | null;
-    hot: string | number;
-    warm: string | number;
-    job_count: string | number;
-  }>)) {
-    const hot = Number(r.hot);
-    const warm = Number(r.warm);
-    unsoldHotTotal += hot;
-    unsoldWarmTotal += warm;
-    unsoldJobCount += Number(r.job_count);
-    if (r.department_code) unsoldByDept.set(r.department_code, { hot, warm });
+  const sevenAgoStr = sevenAgoDate.toISOString().slice(0, 10);
+  for (const v of perJob.values()) {
+    const avg = Math.round(v.sum / v.count);
+    const isHot = v.created > sevenAgoStr;
+    unsoldJobCount += 1;
+    if (isHot) unsoldHotTotal += avg; else unsoldWarmTotal += avg;
+    if (v.dept) {
+      const prior = unsoldByDept.get(v.dept) ?? { hot: 0, warm: 0 };
+      if (isHot) prior.hot += avg; else prior.warm += avg;
+      unsoldByDept.set(v.dept, prior);
+    }
   }
   const unsoldTotal = unsoldHotTotal + unsoldWarmTotal;
 
