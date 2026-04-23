@@ -60,6 +60,8 @@ export interface JobsSyncResult {
     closedOpportunities: number;
     closeRatePct: number; // rounded to 2dp
     soldEstimatesMatched: number; // jobs in window with a sold-estimate lookup hit
+    recallFlagged: number; // jobs in window with recallForId != null (diagnostic)
+    warrantyFlagged: number; // jobs in window with warrantyId != null (diagnostic)
     // Per-jobType breakdown of opps. Sorted by descending opp count so the
     // biggest contributors to overcounting surface first. Useful for
     // reconciling against ST's report.
@@ -409,6 +411,14 @@ export async function syncJobs(
     let soldMatched = 0;
     for (const j of jobs) if (soldByJob.has(j.id)) soldMatched++;
 
+    // Counts for the recall/warranty exclusion — used to verify the new
+    // code is actually running in prod vs a stale deploy.
+    let recallExcluded = 0, warrantyExcluded = 0;
+    for (const j of jobs) {
+      if (j.recallForId != null) recallExcluded++;
+      if (j.warrantyId != null) warrantyExcluded++;
+    }
+
     const oppsByType = Array.from(byType.entries())
       .map(([typeId, s]) => ({
         typeId,
@@ -432,6 +442,8 @@ export async function syncJobs(
         closedOpportunities: totalClosed,
         closeRatePct,
         soldEstimatesMatched: soldMatched,
+        recallFlagged: recallExcluded,
+        warrantyFlagged: warrantyExcluded,
         oppsByType,
       },
     };
