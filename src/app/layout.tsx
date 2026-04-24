@@ -6,7 +6,7 @@ import '@/styles/globals.css';
 
 export const metadata: Metadata = {
   title: 'Lex KPI Dashboard',
-  description: 'Service Star Brands — Lexington location',
+  description: 'Ryans BAMFD',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
