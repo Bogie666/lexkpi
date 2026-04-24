@@ -84,16 +84,32 @@ export async function GET(req: NextRequest) {
     netMonth: sumField(ly2Snap, 'netChange'),
   };
 
-  // 12-month history — sum active_end per month across all tiers, ending at period.cur.to
+  // 12-month history — latest active_end per (month, tier), then sum
+  // across tiers. Avoids double-counting when multiple daily-sync rows
+  // exist within the same month (e.g., today's + yesterday's snapshot).
   const historyRows = await database
     .select()
     .from(membershipDaily)
     .where(and(lte(membershipDaily.reportDate, period.cur.to)));
 
-  const byMonth = new Map<string, number>();
+  const byMonthTier = new Map<string, Map<string, { date: string; active: number }>>();
   for (const r of historyRows) {
     const key = r.reportDate.slice(0, 7);
-    byMonth.set(key, (byMonth.get(key) ?? 0) + Number(r.activeEnd));
+    if (!byMonthTier.has(key)) byMonthTier.set(key, new Map());
+    const tierMap = byMonthTier.get(key)!;
+    const prior = tierMap.get(r.membershipName);
+    if (!prior || r.reportDate > prior.date) {
+      tierMap.set(r.membershipName, {
+        date: r.reportDate,
+        active: Number(r.activeEnd),
+      });
+    }
+  }
+  const byMonth = new Map<string, number>();
+  for (const [month, tiers] of byMonthTier) {
+    let total = 0;
+    for (const v of tiers.values()) total += v.active;
+    byMonth.set(month, total);
   }
   const history = monthKeysBefore(period.cur.to, 12).map((k) => byMonth.get(k) ?? 0);
   const lyHistory = monthKeysBefore(period.ly.to, 12).map((k) => byMonth.get(k) ?? 0);
