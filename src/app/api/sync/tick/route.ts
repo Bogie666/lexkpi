@@ -24,6 +24,64 @@ function mtdWindow(): { from: string; to: string } {
   return { from, to };
 }
 
+function ytdWindow(year: number, toISO?: string): { from: string; to: string } {
+  const today = new Date();
+  const to = toISO ?? today.toISOString().slice(0, 10);
+  return { from: `${year}-01-01`, to };
+}
+
+function ttmWindow(): { from: string; to: string } {
+  const today = new Date();
+  const toISO = today.toISOString().slice(0, 10);
+  const fromDate = new Date(today);
+  fromDate.setUTCFullYear(fromDate.getUTCFullYear() - 1);
+  fromDate.setUTCDate(fromDate.getUTCDate() + 1);
+  return { from: fromDate.toISOString().slice(0, 10), to: toISO };
+}
+
+/** LY shifted window — matches the dashboard's resolvePeriod logic. */
+function shiftYears(win: { from: string; to: string }, years: number): { from: string; to: string } {
+  const shift = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return `${y - years}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  };
+  return { from: shift(win.from), to: shift(win.to) };
+}
+
+/**
+ * Run the tech-reports sync across every preset the dashboard exposes
+ * (MTD, YTD, TTM) plus the LY/LY2 shifted equivalents so compare mode
+ * works out of the box. Each window is independent; we don't bail on
+ * one failing.
+ */
+async function syncTechReportsAllPeriods(): Promise<unknown> {
+  const today = new Date();
+  const todayISO = today.toISOString().slice(0, 10);
+  const currentYear = today.getUTCFullYear();
+  const mtd = mtdWindow();
+  const ytd = ytdWindow(currentYear, todayISO);
+  const ttm = ttmWindow();
+  const windows: Array<{ label: string; window: { from: string; to: string } }> = [
+    { label: 'MTD', window: mtd },
+    { label: 'YTD', window: ytd },
+    { label: 'TTM', window: ttm },
+    { label: 'LY-MTD', window: shiftYears(mtd, 1) },
+    { label: 'LY2-MTD', window: shiftYears(mtd, 2) },
+    { label: 'LY-YTD', window: shiftYears(ytd, 1) },
+    { label: 'LY2-YTD', window: shiftYears(ytd, 2) },
+  ];
+  const results: Array<{ label: string; ok: boolean; error?: string }> = [];
+  for (const { label, window } of windows) {
+    try {
+      await syncTechnicianReports(window, 'cron');
+      results.push({ label, ok: true });
+    } catch (err) {
+      results.push({ label, ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { perWindow: results };
+}
+
 // Silence the unused eq import when we remove the success filter below.
 void eq;
 
@@ -45,7 +103,7 @@ const SOURCES: SourceConfig[] = [
   {
     source: TECHNICIAN_REPORTS_SOURCE,
     minIntervalMin: 30, // 2x per hour
-    run: () => syncTechnicianReports(mtdWindow(), 'cron'),
+    run: () => syncTechReportsAllPeriods(),
   },
   {
     source: CALLCENTER_SOURCE,
