@@ -91,9 +91,12 @@ export async function GET(req: NextRequest) {
       revenue: Number(r.revenue),
       ly,
       closeRate: Number(r.avgCloseBps),
-      jobs: Number(r.jobs),
-      avgTicket: Number(r.avgTicketCents),
-      memberships: Number(r.memberships),
+      // technician_daily uses the older job-centric schema; map best-fit
+      // values into the new opps/avgSale/options shape so the Technician
+      // type stays consistent with the report-based path.
+      opps: Number(r.jobs),
+      avgSale: Number(r.avgTicketCents),
+      options: 0,
       trend,
       spark: [],
     };

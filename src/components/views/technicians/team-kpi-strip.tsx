@@ -22,10 +22,10 @@ export function TeamKPIStrip({ team, compareMode }: { team: TeamRollup; compareM
         <Stat label="Close rate" value={team.closeRate.value} unit="bps" comparison={team.closeRate} compareMode={mode} />
       </Panel>
       <Panel padding="tight">
-        <Stat label="Avg ticket" value={team.avgTicket.value} unit="cents" comparison={team.avgTicket} compareMode={mode} />
+        <Stat label="Avg sale" value={team.avgSale.value} unit="cents" comparison={team.avgSale} compareMode={mode} />
       </Panel>
       <Panel padding="tight">
-        <Stat label="Jobs completed" value={team.jobsDone.value} unit="count" comparison={team.jobsDone} compareMode={mode} />
+        <Stat label="Sales opps" value={team.oppsDone.value} unit="count" comparison={team.oppsDone} compareMode={mode} />
       </Panel>
     </div>
   );

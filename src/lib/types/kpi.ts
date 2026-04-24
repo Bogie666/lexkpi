@@ -84,15 +84,19 @@ export interface Technician {
   name: string;
   departmentCode: string;
   photoUrl: string | null;
-  revenue: number;           // cents
+  revenue: number;           // cents — TotalSales from the report
   ly?: number;               // cents
   closeRate: number;         // bps
   lyCloseRate?: number;      // bps
-  jobs: number;
-  lyJobs?: number;
-  avgTicket: number;         // cents
-  lyAvgTicket?: number;      // cents
-  memberships: number;
+  /** Sales opportunities (was previously CompletedJobs). */
+  opps: number;
+  lyOpps?: number;
+  /** Avg sale = TotalSales / ClosedOpportunities, in cents. */
+  avgSale: number;
+  lyAvgSale?: number;
+  /** Options per opportunity, multiplied by 100 (e.g., 370 = 3.7). */
+  options: number;
+  lyOptions?: number;
   trend: 'up' | 'down' | 'flat';
   spark: number[];
   lySpark?: number[];
@@ -101,9 +105,9 @@ export interface Technician {
 export interface TeamRollup {
   revenue: CompareValue;
   closeRate: CompareValue;
-  avgTicket: CompareValue;
-  jobsDone: CompareValue;
-  memberships: CompareValue;
+  avgSale: CompareValue;
+  oppsDone: CompareValue;
+  options: CompareValue;
 }
 
 export interface TechniciansResponse {

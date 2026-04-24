@@ -28,11 +28,12 @@ interface TechAgg {
   employeeId: number;
   employeeName: string;
   departmentCode: string | null;
-  revenue: number;
-  jobs: number;
+  revenue: number;          // TotalSales (cents)
+  opps: number;             // SalesOpportunity
+  closed: number;           // ClosedOpportunities
   avgCloseBps: number;
-  avgTicketCents: number;
-  memberships: number;
+  avgSaleCents: number;     // TotalSales / ClosedOpportunities
+  options: number;          // OptionsPerOpportunity × 100
 }
 
 /**
@@ -53,25 +54,27 @@ async function techsForWindow(roleCode: string, window: Window): Promise<TechAgg
       ),
     );
   return rows.map((r) => {
-    const jobs = Number(r.completedJobs);
+    const opps = Number(r.salesOpportunity);
+    const closed = Number(r.closedOpportunities);
     const revenue = Number(r.totalSalesCents);
     return {
       employeeId: Number(r.employeeId),
       employeeName: r.employeeName,
       departmentCode: r.technicianBusinessUnit,
       revenue,
-      jobs,
+      opps,
+      closed,
       avgCloseBps: Number(r.closeRateBps ?? 0),
-      avgTicketCents: jobs > 0 ? Math.round(revenue / jobs) : 0,
-      memberships: Number(r.membershipsSold),
+      avgSaleCents: closed > 0 ? Math.round(revenue / closed) : 0,
+      options: Number(r.optionsPerOpportunity ?? 0),
     };
   });
 }
 
 function sortByRole(agg: TechAgg[], primary: Role['sortKey']): TechAgg[] {
   const key =
-    primary === 'avgTicket' ? 'avgTicketCents' :
-    primary === 'jobs' ? 'jobs' :
+    primary === 'avgTicket' ? 'avgSaleCents' :
+    primary === 'jobs' ? 'opps' :
     primary === 'closeRate' ? 'avgCloseBps' :
     'revenue';
   return agg.slice().sort((a, b) =>
@@ -143,11 +146,12 @@ export async function GET(req: NextRequest) {
       ly: lyRow?.revenue,
       closeRate: t.avgCloseBps,
       lyCloseRate: lyRow?.avgCloseBps,
-      jobs: t.jobs,
-      lyJobs: lyRow?.jobs,
-      avgTicket: t.avgTicketCents,
-      lyAvgTicket: lyRow?.avgTicketCents,
-      memberships: t.memberships,
+      opps: t.opps,
+      lyOpps: lyRow?.opps,
+      avgSale: t.avgSaleCents,
+      lyAvgSale: lyRow?.avgSaleCents,
+      options: t.options,
+      lyOptions: lyRow?.options,
       trend,
       // Sparklines require daily data; reports only give us aggregates.
       // Empty arrays keep the UI happy — the chart just renders flat.
@@ -160,6 +164,15 @@ export async function GET(req: NextRequest) {
     arr.reduce((s, a) => s + pick(a), 0);
   const avg = (arr: TechAgg[], pick: (a: TechAgg) => number) =>
     arr.length === 0 ? 0 : Math.round(arr.reduce((s, a) => s + pick(a), 0) / arr.length);
+
+  // Team-level avg sale = SUM(revenue) / SUM(closed). Avoids the bias
+  // of averaging per-tech ratios which weights each tech equally
+  // regardless of volume.
+  const teamAvgSale = (rows: TechAgg[]) => {
+    const totalRev = sum(rows, (a) => a.revenue);
+    const totalClosed = sum(rows, (a) => a.closed);
+    return totalClosed > 0 ? Math.round(totalRev / totalClosed) : 0;
+  };
 
   const team: TechniciansResponse['team'] = {
     revenue: compareValue(
@@ -174,22 +187,22 @@ export async function GET(req: NextRequest) {
       avg(ly2, (a) => a.avgCloseBps),
       'bps',
     ),
-    avgTicket: compareValue(
-      avg(cur, (a) => a.avgTicketCents),
-      avg(ly, (a) => a.avgTicketCents),
-      avg(ly2, (a) => a.avgTicketCents),
+    avgSale: compareValue(
+      teamAvgSale(cur),
+      teamAvgSale(ly),
+      teamAvgSale(ly2),
       'cents',
     ),
-    jobsDone: compareValue(
-      sum(cur, (a) => a.jobs),
-      sum(ly, (a) => a.jobs),
-      sum(ly2, (a) => a.jobs),
+    oppsDone: compareValue(
+      sum(cur, (a) => a.opps),
+      sum(ly, (a) => a.opps),
+      sum(ly2, (a) => a.opps),
       'count',
     ),
-    memberships: compareValue(
-      sum(cur, (a) => a.memberships),
-      sum(ly, (a) => a.memberships),
-      sum(ly2, (a) => a.memberships),
+    options: compareValue(
+      avg(cur, (a) => a.options),
+      avg(ly, (a) => a.options),
+      avg(ly2, (a) => a.options),
       'count',
     ),
   };

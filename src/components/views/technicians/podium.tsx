@@ -21,9 +21,9 @@ function initials(name: string): string {
 function primaryValue(tech: Technician, role: Role): string {
   switch (role.sortKey) {
     case 'avgTicket':
-      return fmtMoney(tech.avgTicket);
+      return fmtMoney(tech.avgSale);
     case 'jobs':
-      return tech.jobs.toLocaleString('en-US');
+      return tech.opps.toLocaleString('en-US');
     case 'closeRate':
       return fmtPercent(tech.closeRate);
     case 'revenue':
@@ -95,7 +95,7 @@ export function PodiumCard({ rank, tech, role }: PodiumCardProps) {
       <div className="flex items-center gap-2 text-[11px] text-muted font-mono tabular-nums">
         <span>{fmtPercent(tech.closeRate, { decimals: 1 })} close</span>
         <span aria-hidden="true" className="h-1 w-1 rounded-full bg-border" />
-        <span>{tech.jobs} jobs</span>
+        <span>{tech.opps} opps</span>
       </div>
       <Sparkline
         values={tech.spark}

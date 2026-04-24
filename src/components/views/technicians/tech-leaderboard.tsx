@@ -49,14 +49,14 @@ export function TechLeaderboard({ technicians, compareMode }: TechLeaderboardPro
               {compareOn && (
                 <th className="py-2 pr-4 font-normal text-right hidden lg:table-cell">Δ Close</th>
               )}
-              <th className="py-2 pr-4 font-normal text-right hidden md:table-cell">Avg ticket</th>
+              <th className="py-2 pr-4 font-normal text-right hidden md:table-cell">Avg sale</th>
               {compareOn && (
-                <th className="py-2 pr-4 font-normal text-right hidden lg:table-cell">Δ Ticket</th>
+                <th className="py-2 pr-4 font-normal text-right hidden lg:table-cell">Δ Sale</th>
               )}
               {!compareOn && (
                 <>
-                  <th className="py-2 pr-4 font-normal text-right hidden md:table-cell">Jobs</th>
-                  <th className="py-2 pr-4 font-normal text-right hidden lg:table-cell">Members</th>
+                  <th className="py-2 pr-4 font-normal text-right hidden md:table-cell">Opps</th>
+                  <th className="py-2 pr-4 font-normal text-right hidden lg:table-cell">Options</th>
                 </>
               )}
               <th className="py-2 pr-2 font-normal text-right hidden lg:table-cell">Trend</th>
@@ -148,15 +148,15 @@ export function TechLeaderboard({ technicians, compareMode }: TechLeaderboardPro
                     </td>
                   )}
                   <td className="py-3 pr-4 text-right font-mono tabular-nums text-[13px] text-muted hidden md:table-cell">
-                    {fmtMoney(t.avgTicket)}
+                    {fmtMoney(t.avgSale)}
                   </td>
                   {compareOn && (
                     <td className="py-3 pr-4 text-right hidden lg:table-cell">
                       <div className="flex justify-end">
-                        {t.lyAvgTicket !== undefined ? (
+                        {t.lyAvgSale !== undefined ? (
                           <ComparePill
-                            current={t.avgTicket}
-                            comparison={t.lyAvgTicket}
+                            current={t.avgSale}
+                            comparison={t.lyAvgSale}
                             unit="cents"
                             baseline="ly"
                             size="sm"
@@ -170,10 +170,10 @@ export function TechLeaderboard({ technicians, compareMode }: TechLeaderboardPro
                   {!compareOn && (
                     <>
                       <td className="py-3 pr-4 text-right font-mono tabular-nums text-[13px] text-muted hidden md:table-cell">
-                        {t.jobs}
+                        {t.opps}
                       </td>
                       <td className="py-3 pr-4 text-right font-mono tabular-nums text-[13px] text-muted hidden lg:table-cell">
-                        {t.memberships}
+                        {(t.options / 100).toFixed(1)}
                       </td>
                     </>
                   )}
