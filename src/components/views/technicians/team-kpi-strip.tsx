@@ -11,8 +11,18 @@ function toStatMode(m: CompareMode): 'prev' | 'ly' | 'ly2' | 'none' {
   return 'prev';
 }
 
-export function TeamKPIStrip({ team, compareMode }: { team: TeamRollup; compareMode: CompareMode }) {
+export function TeamKPIStrip({
+  team,
+  compareMode,
+  roleCode,
+}: {
+  team: TeamRollup;
+  compareMode: CompareMode;
+  roleCode: string;
+}) {
   const mode = toStatMode(compareMode);
+  const isCA = roleCode === 'comfort_advisor';
+
   return (
     <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
       <Panel padding="tight">
@@ -21,12 +31,25 @@ export function TeamKPIStrip({ team, compareMode }: { team: TeamRollup; compareM
       <Panel padding="tight">
         <Stat label="Close rate" value={team.closeRate.value} unit="bps" comparison={team.closeRate} compareMode={mode} />
       </Panel>
-      <Panel padding="tight">
-        <Stat label="Avg sale" value={team.avgSale.value} unit="cents" comparison={team.avgSale} compareMode={mode} />
-      </Panel>
-      <Panel padding="tight">
-        <Stat label="Sales opps" value={team.oppsDone.value} unit="count" comparison={team.oppsDone} compareMode={mode} />
-      </Panel>
+      {isCA ? (
+        <>
+          <Panel padding="tight">
+            <Stat label="Avg sale" value={team.avgSale.value} unit="cents" comparison={team.avgSale} compareMode={mode} />
+          </Panel>
+          <Panel padding="tight">
+            <Stat label="Sales opps" value={team.oppsDone.value} unit="count" comparison={team.oppsDone} compareMode={mode} />
+          </Panel>
+        </>
+      ) : (
+        <>
+          <Panel padding="tight">
+            <Stat label="Avg ticket" value={team.avgTicket.value} unit="cents" comparison={team.avgTicket} compareMode={mode} />
+          </Panel>
+          <Panel padding="tight">
+            <Stat label="Jobs completed" value={team.jobsDone.value} unit="count" comparison={team.jobsDone} compareMode={mode} />
+          </Panel>
+        </>
+      )}
     </div>
   );
 }

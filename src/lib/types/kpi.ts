@@ -120,9 +120,14 @@ export interface Technician {
 export interface TeamRollup {
   revenue: CompareValue;
   closeRate: CompareValue;
+  /** Avg sale = SUM(revenue) / SUM(closed_opps). Primary for CA. */
   avgSale: CompareValue;
+  /** Avg ticket = SUM(revenue) / SUM(completed_jobs). Primary for non-CA. */
+  avgTicket: CompareValue;
+  /** Sum of sales opps across techs. Primary 4th metric for CA. */
   oppsDone: CompareValue;
-  options: CompareValue;
+  /** Sum of completed jobs across techs. Primary 4th metric for non-CA. */
+  jobsDone: CompareValue;
 }
 
 export interface TechniciansResponse {

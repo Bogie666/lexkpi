@@ -185,13 +185,17 @@ export async function GET(req: NextRequest) {
   const avg = (arr: TechAgg[], pick: (a: TechAgg) => number) =>
     arr.length === 0 ? 0 : Math.round(arr.reduce((s, a) => s + pick(a), 0) / arr.length);
 
-  // Team-level avg sale = SUM(revenue) / SUM(closed). Avoids the bias
-  // of averaging per-tech ratios which weights each tech equally
-  // regardless of volume.
+  // Team-level means use SUM(num)/SUM(denom) so volume is weighted, not
+  // mean-of-ratios.
   const teamAvgSale = (rows: TechAgg[]) => {
     const totalRev = sum(rows, (a) => a.revenue);
     const totalClosed = sum(rows, (a) => a.closed);
     return totalClosed > 0 ? Math.round(totalRev / totalClosed) : 0;
+  };
+  const teamAvgTicket = (rows: TechAgg[]) => {
+    const totalRev = sum(rows, (a) => a.revenue);
+    const totalJobs = sum(rows, (a) => a.jobs);
+    return totalJobs > 0 ? Math.round(totalRev / totalJobs) : 0;
   };
 
   const team: TechniciansResponse['team'] = {
@@ -213,16 +217,22 @@ export async function GET(req: NextRequest) {
       teamAvgSale(ly2),
       'cents',
     ),
+    avgTicket: compareValue(
+      teamAvgTicket(cur),
+      teamAvgTicket(ly),
+      teamAvgTicket(ly2),
+      'cents',
+    ),
     oppsDone: compareValue(
       sum(cur, (a) => a.opps),
       sum(ly, (a) => a.opps),
       sum(ly2, (a) => a.opps),
       'count',
     ),
-    options: compareValue(
-      avg(cur, (a) => a.options),
-      avg(ly, (a) => a.options),
-      avg(ly2, (a) => a.options),
+    jobsDone: compareValue(
+      sum(cur, (a) => a.jobs),
+      sum(ly, (a) => a.jobs),
+      sum(ly2, (a) => a.jobs),
       'count',
     ),
   };

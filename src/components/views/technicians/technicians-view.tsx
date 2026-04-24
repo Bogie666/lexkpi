@@ -84,7 +84,7 @@ export function TechniciansView() {
             <CompareBanner insights={insights} mode={compareYear} />
           )}
 
-          <TeamKPIStrip team={data.team} compareMode={params.compare} />
+          <TeamKPIStrip team={data.team} compareMode={params.compare} roleCode={data.role.code} />
 
           {data.technicians.length >= 3 && (
             <Podium
