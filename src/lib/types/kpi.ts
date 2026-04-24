@@ -140,10 +140,10 @@ export interface Agent {
 
 export interface CallCenterResponse {
   kpis: {
-    booked: CompareValue;      // count
-    bookRate: CompareValue;    // bps
-    avgWait: CompareValue;     // seconds
-    abandonRate: CompareValue; // bps
+    booked: CompareValue;       // count
+    bookRate: CompareValue;     // bps
+    avgCallTime: CompareValue;  // seconds — duration of an average call
+    abandonRate: CompareValue;  // bps
   };
   hourly: HourlyCall[];
   agents: Agent[];

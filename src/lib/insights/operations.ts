@@ -34,14 +34,14 @@ export function callCenterInsights(data: CallCenterResponse, mode: 'ly' | 'ly2')
     }
   }
 
-  const w = data.kpis.avgWait;
+  const w = data.kpis.avgCallTime;
   const lyWait = baseline(w, mode);
   if (lyWait !== undefined) {
-    const delta = w.value - lyWait; // lower is better
+    const delta = w.value - lyWait; // lower is generally better
     if (Math.abs(delta) >= 3 && out.length < 3) {
       out.push({
         tone: delta <= 0 ? 'up' : 'down',
-        title: `Avg wait ${delta <= 0 ? 'down' : 'up'} ${Math.abs(delta)}s`,
+        title: `Avg call time ${delta <= 0 ? 'down' : 'up'} ${Math.abs(delta)}s`,
         sub: `${w.value}s now · ${lyWait}s prior`,
       });
     }

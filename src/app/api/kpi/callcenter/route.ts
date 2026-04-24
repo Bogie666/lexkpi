@@ -29,7 +29,9 @@ async function aggregateDaily(window: Window) {
     .select({
       calls: sql<number>`COALESCE(SUM(${callCenterDaily.totalCalls}), 0)`,
       booked: sql<number>`COALESCE(SUM(${callCenterDaily.callsBooked}), 0)`,
-      avgWait: sql<number>`COALESCE(AVG(${callCenterDaily.avgWaitSec})::int, 0)`,
+      // Fall back to the older avg_wait_sec when the new column is null so
+      // the UI keeps showing something during/after the column migration.
+      avgCallTime: sql<number>`COALESCE(AVG(COALESCE(${callCenterDaily.avgCallTimeSec}, ${callCenterDaily.avgWaitSec}))::int, 0)`,
       avgAbandon: sql<number>`COALESCE(AVG(${callCenterDaily.abandonRateBps})::int, 0)`,
     })
     .from(callCenterDaily)
@@ -39,7 +41,7 @@ async function aggregateDaily(window: Window) {
         lte(callCenterDaily.reportDate, window.to),
       ),
     );
-  return rows[0] ?? { calls: 0, booked: 0, avgWait: 0, avgAbandon: 0 };
+  return rows[0] ?? { calls: 0, booked: 0, avgCallTime: 0, avgAbandon: 0 };
 }
 
 export async function GET(req: NextRequest) {
@@ -127,7 +129,7 @@ export async function GET(req: NextRequest) {
     kpis: {
       booked: compareValue(booked, lyBooked, ly2Booked, 'count'),
       bookRate: compareValue(bookRate, lyBookRate, ly2BookRate, 'bps'),
-      avgWait: compareValue(Number(curAgg.avgWait), Number(lyAgg.avgWait), Number(ly2Agg.avgWait), 'seconds'),
+      avgCallTime: compareValue(Number(curAgg.avgCallTime), Number(lyAgg.avgCallTime), Number(ly2Agg.avgCallTime), 'seconds'),
       abandonRate: compareValue(Number(curAgg.avgAbandon), Number(lyAgg.avgAbandon), Number(ly2Agg.avgAbandon), 'bps'),
     },
     hourly: hourlyRows.map((h) => {

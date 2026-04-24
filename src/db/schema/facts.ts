@@ -78,6 +78,7 @@ export const callCenterDaily = pgTable(
     callsBooked: integer('calls_booked').notNull().default(0),
     bookingRateBps: integer('booking_rate_bps'),
     avgWaitSec: integer('avg_wait_sec'),
+    avgCallTimeSec: integer('avg_call_time_sec'),
     abandonRateBps: integer('abandon_rate_bps'),
 
     sourceReportId: text('source_report_id').notNull(),

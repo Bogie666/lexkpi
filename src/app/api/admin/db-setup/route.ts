@@ -70,6 +70,13 @@ async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: s
     CREATE INDEX IF NOT EXISTS ea_job_idx ON estimate_analysis (job_id)
   `;
 
+  // avg_call_time_sec added to call_center_daily — the Call Center page
+  // now shows "Avg Call Time" in place of "Avg Wait".
+  await sql`
+    ALTER TABLE call_center_daily
+    ADD COLUMN IF NOT EXISTS avg_call_time_sec integer
+  `;
+
   // technician_period — aggregated from ST's role-specific Tech KPI
   // reports. Not daily; one row per (role, period, tech).
   await sql`
@@ -115,6 +122,7 @@ async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: s
     columnsEnsured: [
       'financial_daily.closed_opportunities',
       'estimate_analysis.job_id',
+      'call_center_daily.avg_call_time_sec',
     ],
   };
 }

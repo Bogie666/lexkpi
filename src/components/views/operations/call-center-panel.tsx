@@ -68,10 +68,10 @@ export function CallCenterPanel({ data, compareMode }: CallCenterPanelProps) {
         </Panel>
         <Panel padding="tight">
           <Stat
-            label="Avg wait"
-            value={data.kpis.avgWait.value}
+            label="Avg call time"
+            value={data.kpis.avgCallTime.value}
             unit="seconds"
-            comparison={data.kpis.avgWait}
+            comparison={data.kpis.avgCallTime}
             compareMode={statMode}
           />
         </Panel>
