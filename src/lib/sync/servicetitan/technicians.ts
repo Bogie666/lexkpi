@@ -39,7 +39,7 @@ export interface TechniciansSyncResult {
   runId: number | null;
   skipped?: 'another_run_active';
   jobsFetched: number;
-  assignmentsFetched: number;
+  employeesLoaded: number;
   rowsUpserted: number;
   jobsDropped: number;
   uniqueTechs: number;
@@ -52,6 +52,15 @@ interface StJob {
   businessUnitId?: number | null;
   jobTypeId?: number | null;
   noCharge?: boolean;
+  soldById?: number | null;
+}
+
+interface StEmployee {
+  id: number;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  active?: boolean;
 }
 
 interface StJobType {
@@ -63,17 +72,6 @@ interface StEstimate {
   id: number;
   jobId?: number | null;
   subtotal?: number | string | null;
-}
-
-interface StAssignment {
-  id: number;
-  jobId?: number | null;
-  appointmentId?: number | null;
-  technicianId?: number | null;
-  technicianName?: string | null;
-  status?: string | null;
-  active?: boolean;
-  assignedOn?: string | null;
 }
 
 /** Map our dept code → the technician_roles code used for sub-tabs. */
@@ -178,38 +176,21 @@ function isClosedOpportunity(
 }
 
 /**
- * For each job in the window, pick one "primary" tech to attribute the
- * job to. We prefer the assignment with status='Done' or active=true.
- * If a job has multiple, take the earliest assignedOn. Returns a map
- * jobId → { techId, techName }.
+ * Roster lookup: ST employee id → display name. Used to resolve the
+ * tech attached to a job's soldById field.
  */
-async function loadPrimaryTechByJob(
-  window: SyncWindow,
-): Promise<Map<number, { techId: number; techName: string }>> {
-  const assigns = await collectResource<StAssignment>({
-    path: '/dispatch/v2/tenant/{tenant}/appointment-assignments',
-    query: {
-      modifiedOnOrAfter: `${shiftDate(window.from, -7)}T00:00:00Z`,
-    },
+async function loadEmployeeNames(): Promise<Map<number, string>> {
+  const emps = await collectResource<StEmployee>({
+    path: '/settings/v2/tenant/{tenant}/employees',
+    query: { active: 'true' },
   });
-  const byJob = new Map<number, { techId: number; techName: string; assignedOn: string }>();
-  for (const a of assigns) {
-    if (!a.jobId || !a.technicianId || a.active === false) continue;
-    const prior = byJob.get(a.jobId);
-    const when = a.assignedOn ?? '';
-    if (!prior || when < prior.assignedOn) {
-      byJob.set(a.jobId, {
-        techId: a.technicianId,
-        techName: a.technicianName ?? `tech#${a.technicianId}`,
-        assignedOn: when,
-      });
-    }
+  const m = new Map<number, string>();
+  for (const e of emps) {
+    const fallback = [e.firstName, e.lastName].filter(Boolean).join(' ');
+    const name = e.name || fallback || `emp#${e.id}`;
+    m.set(e.id, name);
   }
-  const out = new Map<number, { techId: number; techName: string }>();
-  for (const [jobId, v] of byJob) {
-    out.set(jobId, { techId: v.techId, techName: v.techName });
-  }
-  return out;
+  return m;
 }
 
 export async function syncTechnicians(
@@ -228,7 +209,7 @@ export async function syncTechnicians(
       runId: null,
       skipped: start.reason,
       jobsFetched: 0,
-      assignmentsFetched: 0,
+      employeesLoaded: 0,
       rowsUpserted: 0,
       jobsDropped: 0,
       uniqueTechs: 0,
@@ -237,11 +218,11 @@ export async function syncTechnicians(
   const runId = start.runId;
 
   try {
-    const [buToDept, thresholds, soldByJob, jobToTech] = await Promise.all([
+    const [buToDept, thresholds, soldByJob, empNames] = await Promise.all([
       loadBuToDeptMap(),
       loadJobTypeThresholds(),
       loadSoldEstimateSubtotals(window),
-      loadPrimaryTechByJob(window),
+      loadEmployeeNames(),
     ]);
 
     const jobs = await collectResource<StJob>({
@@ -289,18 +270,25 @@ export async function syncTechnicians(
         dropped++;
         continue;
       }
-      const tech = jobToTech.get(j.id);
-      if (!tech) {
+      // Attribute by job.soldById. For installs, this is the Comfort
+      // Advisor who closed the original estimate — not the installer
+      // who did the physical work. For service jobs where the tech
+      // sold their own upsell, soldById is the tech themselves. Jobs
+      // with no soldById (diagnostic that didn't convert) have no
+      // closer to credit; we drop them from tech stats.
+      if (!j.soldById) {
         dropped++;
         continue;
       }
-      uniqueTechs.add(tech.techId);
+      const techId = j.soldById;
+      const techName = empNames.get(techId) ?? `emp#${techId}`;
+      uniqueTechs.add(techId);
 
-      const key = `${tech.techId}|${date}|${role}`;
+      const key = `${techId}|${date}|${role}`;
       if (!agg.has(key)) {
         agg.set(key, {
-          employeeId: tech.techId,
-          employeeName: tech.techName,
+          employeeId: techId,
+          employeeName: techName,
           reportDate: date,
           roleCode: role,
           departmentCode: dept,
@@ -381,7 +369,7 @@ export async function syncTechnicians(
     return {
       runId,
       jobsFetched: jobs.length,
-      assignmentsFetched: jobToTech.size,
+      employeesLoaded: empNames.size,
       rowsUpserted: upserted,
       jobsDropped: dropped,
       uniqueTechs: uniqueTechs.size,
