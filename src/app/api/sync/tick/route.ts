@@ -12,6 +12,7 @@ import { db } from '@/db/client';
 import { syncRuns } from '@/db/schema';
 import { syncFinancial, FINANCIAL_SOURCE } from '@/lib/sync/servicetitan/financial';
 import { syncTechnicianReports, TECHNICIAN_REPORTS_SOURCE } from '@/lib/sync/servicetitan/technician-reports';
+import { syncCallcenter, CALLCENTER_SOURCE } from '@/lib/sync/servicetitan/callcenter';
 import { trailingDays } from '@/lib/sync/window';
 
 function mtdWindow(): { from: string; to: string } {
@@ -45,6 +46,11 @@ const SOURCES: SourceConfig[] = [
     source: TECHNICIAN_REPORTS_SOURCE,
     minIntervalMin: 30, // 2x per hour
     run: () => syncTechnicianReports(mtdWindow(), 'cron'),
+  },
+  {
+    source: CALLCENTER_SOURCE,
+    minIntervalMin: 30, // 2x per hour — same cadence as tech reports
+    run: () => syncCallcenter(mtdWindow(), 'cron'),
   },
   // Additional sources land here as they're ported.
 ];
