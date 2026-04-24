@@ -77,6 +77,17 @@ async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: s
     ADD COLUMN IF NOT EXISTS avg_call_time_sec integer
   `;
 
+  // All technician role leaderboards sort by closed revenue. HVAC Tech
+  // and Maint. originally seeded with avgTicket/jobs; patch them.
+  await sql`
+    UPDATE technician_roles
+    SET primary_metric = 'revenue',
+        primary_metric_label = 'Closed revenue',
+        updated_at = now()
+    WHERE code IN ('hvac_tech', 'hvac_maintenance')
+      AND primary_metric <> 'revenue'
+  `;
+
   // technician_period — aggregated from ST's role-specific Tech KPI
   // reports. Not daily; one row per (role, period, tech).
   await sql`

@@ -119,8 +119,8 @@ export interface RoleSeed {
 
 export const ROLES: RoleSeed[] = [
   { code: 'comfort_advisor', name: 'Comfort Advisor', primaryMetric: 'revenue', primaryMetricLabel: 'Closed revenue', sortOrder: 10 },
-  { code: 'hvac_tech', name: 'HVAC Tech', primaryMetric: 'avgTicket', primaryMetricLabel: 'Ticket average', sortOrder: 20 },
-  { code: 'hvac_maintenance', name: 'HVAC Maint.', primaryMetric: 'jobs', primaryMetricLabel: 'Jobs completed', sortOrder: 30 },
+  { code: 'hvac_tech', name: 'HVAC Tech', primaryMetric: 'revenue', primaryMetricLabel: 'Closed revenue', sortOrder: 20 },
+  { code: 'hvac_maintenance', name: 'HVAC Maint.', primaryMetric: 'revenue', primaryMetricLabel: 'Closed revenue', sortOrder: 30 },
   { code: 'commercial_hvac', name: 'Commercial HVAC', primaryMetric: 'revenue', primaryMetricLabel: 'Closed revenue', sortOrder: 40 },
   { code: 'plumbing', name: 'Plumbing', primaryMetric: 'revenue', primaryMetricLabel: 'Closed revenue', sortOrder: 50 },
   { code: 'electrical', name: 'Electrical', primaryMetric: 'revenue', primaryMetricLabel: 'Closed revenue', sortOrder: 60 },
