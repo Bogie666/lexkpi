@@ -56,7 +56,7 @@ const ROLE_REPORTS: Record<string, string> = {
   electrical: '392071757', // Ryan Electrical Dashboard Tech KPI (DFW)
   commercial_hvac: '398188829', // Ryan Commercial Dashboard Tech KPI (DFW)
 };
-const REPORT_CATEGORY = 'business-unit-dashboard';
+const REPORT_CATEGORY = 'technician';
 
 interface StReportDataPage {
   fields: Array<{ name: string; label?: string; dataType?: string }>;
