@@ -55,17 +55,28 @@ export async function GET(req: NextRequest) {
     out.technicians = { error: err instanceof Error ? err.message : String(err) };
   }
 
-  // 2. Employees (everyone on the settings side — office + field)
+  // 2. Employees (active + inactive — need inactive for historical data
+  //    attribution since terminated employees still have soldById on
+  //    historical jobs).
   try {
     const emps = await collectResource<StAny>({
       path: '/settings/v2/tenant/{tenant}/employees',
-      query: { active: 'true' },
-      pageSize: 50,
+      query: { active: 'any' }, // no filter — get everyone
+      pageSize: 500,
     });
+    // Count distinct role string values so we see all categories
+    const roleCounts: Record<string, number> = {};
+    for (const e of emps) {
+      const r = typeof e.role === 'string' ? e.role : '(no-role)';
+      roleCounts[r] = (roleCounts[r] ?? 0) + 1;
+    }
     out.employees = {
       count: emps.length,
+      activeCount: emps.filter((e) => e.active === true).length,
+      roleCounts,
       keysSeen: Array.from(new Set(emps.flatMap((e) => Object.keys(e)))).sort(),
-      sample: emps.slice(0, 3),
+      sampleActive: emps.find((e) => e.active === true) ?? null,
+      sampleInactive: emps.find((e) => e.active === false) ?? null,
     };
   } catch (err) {
     out.employees = { error: err instanceof Error ? err.message : String(err) };
