@@ -13,6 +13,7 @@ import { syncRuns } from '@/db/schema';
 import { syncFinancial, FINANCIAL_SOURCE } from '@/lib/sync/servicetitan/financial';
 import { syncTechnicianReports, TECHNICIAN_REPORTS_SOURCE } from '@/lib/sync/servicetitan/technician-reports';
 import { syncCallcenter, CALLCENTER_SOURCE } from '@/lib/sync/servicetitan/callcenter';
+import { syncMemberships, MEMBERSHIPS_SOURCE } from '@/lib/sync/servicetitan/memberships';
 import { trailingDays } from '@/lib/sync/window';
 
 function mtdWindow(): { from: string; to: string } {
@@ -109,6 +110,11 @@ const SOURCES: SourceConfig[] = [
     source: CALLCENTER_SOURCE,
     minIntervalMin: 30, // 2x per hour — same cadence as tech reports
     run: () => syncCallcenter(mtdWindow(), 'cron'),
+  },
+  {
+    source: MEMBERSHIPS_SOURCE,
+    minIntervalMin: 60, // 1x per hour — active count changes slowly
+    run: () => syncMemberships('cron'),
   },
   // Additional sources land here as they're ported.
 ];
