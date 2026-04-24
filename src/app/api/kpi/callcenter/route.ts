@@ -104,6 +104,39 @@ export async function GET(req: NextRequest) {
     .groupBy(callCenterDaily.employeeName);
   const lyRateByName = new Map(lyAgentRows.map((r) => [r.name, Number(r.rate)]));
 
+  // Daily rollup across the window — one row per day, summed across
+  // agents. Drives the per-day trend chart on the Call Center panel.
+  const dailyRows = await database
+    .select({
+      date: callCenterDaily.reportDate,
+      total: sql<number>`COALESCE(SUM(${callCenterDaily.totalCalls}), 0)::int`,
+      booked: sql<number>`COALESCE(SUM(${callCenterDaily.callsBooked}), 0)::int`,
+      avgCallTime: sql<number>`COALESCE(AVG(COALESCE(${callCenterDaily.avgCallTimeSec}, ${callCenterDaily.avgWaitSec}))::int, 0)`,
+      avgAbandon: sql<number>`COALESCE(AVG(${callCenterDaily.abandonRateBps})::int, 0)`,
+    })
+    .from(callCenterDaily)
+    .where(
+      and(
+        gte(callCenterDaily.reportDate, period.cur.from),
+        lte(callCenterDaily.reportDate, period.cur.to),
+      ),
+    )
+    .groupBy(callCenterDaily.reportDate)
+    .orderBy(asc(callCenterDaily.reportDate));
+
+  const byDay = dailyRows.map((r) => {
+    const total = Number(r.total);
+    const booked = Number(r.booked);
+    return {
+      date: r.date,
+      total,
+      booked,
+      bookRateBps: total > 0 ? Math.round((booked / total) * 10000) : 0,
+      avgCallTimeSec: Number(r.avgCallTime),
+      abandonRateBps: Number(r.avgAbandon),
+    };
+  });
+
   // Hourly — take the latest day in-window for pacing display
   const hourlyRows = await database
     .select()
@@ -149,6 +182,7 @@ export async function GET(req: NextRequest) {
       rate: Number(a.rate),
       lyRate: lyRateByName.get(a.name),
     })),
+    byDay,
     meta: {
       period: period.preset ? period.preset.toUpperCase() : 'Custom',
       asOf: new Date().toISOString(),

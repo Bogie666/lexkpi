@@ -147,6 +147,14 @@ export interface CallCenterResponse {
   };
   hourly: HourlyCall[];
   agents: Agent[];
+  byDay: Array<{
+    date: string;
+    total: number;
+    booked: number;
+    bookRateBps: number;
+    avgCallTimeSec: number;
+    abandonRateBps: number;
+  }>;
   meta: {
     period: string;
     asOf: string;
