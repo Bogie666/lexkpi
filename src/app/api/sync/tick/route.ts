@@ -11,9 +11,11 @@ import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { syncRuns } from '@/db/schema';
 import { syncFinancial, FINANCIAL_SOURCE } from '@/lib/sync/servicetitan/financial';
+import { syncJobs, JOBS_SOURCE } from '@/lib/sync/servicetitan/jobs';
 import { syncTechnicianReports, TECHNICIAN_REPORTS_SOURCE } from '@/lib/sync/servicetitan/technician-reports';
 import { syncCallcenter, CALLCENTER_SOURCE } from '@/lib/sync/servicetitan/callcenter';
 import { syncMemberships, MEMBERSHIPS_SOURCE } from '@/lib/sync/servicetitan/memberships';
+import { syncEstimates, ESTIMATES_SOURCE } from '@/lib/sync/servicetitan/estimates';
 import { trailingDays } from '@/lib/sync/window';
 
 function mtdWindow(): { from: string; to: string } {
@@ -113,10 +115,19 @@ const SOURCES: SourceConfig[] = [
   },
   {
     source: MEMBERSHIPS_SOURCE,
-    minIntervalMin: 60, // 1x per hour — active count changes slowly
+    minIntervalMin: 30, // 2x per hour
     run: () => syncMemberships('cron'),
   },
-  // Additional sources land here as they're ported.
+  {
+    source: JOBS_SOURCE,
+    minIntervalMin: 30, // 2x per hour — opps/closed/avg-ticket on Financial
+    run: () => syncJobs(mtdWindow(), 'cron'),
+  },
+  {
+    source: ESTIMATES_SOURCE,
+    minIntervalMin: 30, // 2x per hour — Unsold Estimates panel
+    run: () => syncEstimates('cron'),
+  },
 ];
 
 function authorized(req: NextRequest): boolean {

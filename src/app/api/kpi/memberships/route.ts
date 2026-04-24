@@ -22,13 +22,28 @@ interface TierSnapshot {
   netChange: number;
 }
 
-/** Pick the latest row per tier at or before `asOf`. */
+/**
+ * Pick the latest row per tier at or before `asOf`. Only counts tiers
+ * that have been seen recently (within the freshness window) — older
+ * rows are stale backfill data for tiers that aren't active anymore
+ * and shouldn't inflate the 'active now' sum.
+ */
 async function latestSnapshotsPerTier(asOf: string): Promise<TierSnapshot[]> {
   const database = db();
   const rows = await database
     .select()
     .from(membershipDaily)
     .where(lte(membershipDaily.reportDate, asOf));
+
+  // A tier's 'current active' row must be within ~30 days of asOf. Otherwise
+  // the tier is dormant — the backfill's last activeEnd value is a
+  // historical snapshot, not a current count.
+  const FRESHNESS_DAYS = 40;
+  const freshCutoff = (() => {
+    const d = new Date(`${asOf}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - FRESHNESS_DAYS);
+    return d.toISOString().slice(0, 10);
+  })();
 
   const latest = new Map<string, TierSnapshot>();
   for (const r of rows) {
@@ -44,7 +59,8 @@ async function latestSnapshotsPerTier(asOf: string): Promise<TierSnapshot[]> {
       });
     }
   }
-  return Array.from(latest.values());
+  // Drop dormant tiers whose latest row is older than the freshness cutoff.
+  return Array.from(latest.values()).filter((t) => t.date >= freshCutoff);
 }
 
 export async function GET(req: NextRequest) {
