@@ -32,7 +32,11 @@ function authorized(req: NextRequest): boolean {
  * drizzle-kit push locally; this path exists to patch production when we
  * can't reach it from a shell.
  */
-async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: string[] }> {
+async function runSchema(): Promise<{
+  tablesEnsured: string[];
+  columnsEnsured: string[];
+  roleMetricUpdated: string[];
+}> {
   const url =
     process.env.DATABASE_URL_UNPOOLED ??
     process.env.POSTGRES_URL_NON_POOLING ??
@@ -79,13 +83,14 @@ async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: s
 
   // All technician role leaderboards sort by closed revenue. HVAC Tech
   // and Maint. originally seeded with avgTicket/jobs; patch them.
-  await sql`
+  const roleUpdate = await sql`
     UPDATE technician_roles
     SET primary_metric = 'revenue',
         primary_metric_label = 'Closed revenue',
         updated_at = now()
     WHERE code IN ('hvac_tech', 'hvac_maintenance')
       AND primary_metric <> 'revenue'
+    RETURNING code
   `;
 
   // technician_period — aggregated from ST's role-specific Tech KPI
@@ -135,6 +140,7 @@ async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: s
       'estimate_analysis.job_id',
       'call_center_daily.avg_call_time_sec',
     ],
+    roleMetricUpdated: (roleUpdate as { code: string }[]).map((r) => r.code),
   };
 }
 
