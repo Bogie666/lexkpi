@@ -1,8 +1,8 @@
 /**
- * Memberships sync. Pulls active memberships from ST and writes a daily
- * snapshot (row per type for today) into membership_daily. The dashboard's
- * /api/kpi/memberships and Financial KPI strip read from the latest row
- * per tier, so one sync per day keeps the UI fresh.
+ * Memberships sync — daily snapshot. Pulls every membership in ST
+ * (all statuses) so we can compute not just today's active count per
+ * tier but also "new this month" and "canceled this month" — the
+ * columns the dashboard uses for growth / churn stats.
  *
  * On success, we also purge any `source_report_id='seed'` rows so the
  * fake Cool-Club / Cool-Club-Plus / Total-Comfort tiers stop appearing
@@ -28,6 +28,8 @@ export interface MembershipsSyncResult {
   membershipsFetched: number;
   tiersWritten: number;
   totalActive: number;
+  totalNewThisMonth: number;
+  totalCanceledThisMonth: number;
 }
 
 interface StMembership {
@@ -35,6 +37,9 @@ interface StMembership {
   status?: string;
   active?: boolean;
   membershipTypeId?: number | null;
+  from?: string | null;
+  to?: string | null;
+  cancellationDate?: string | null;
 }
 
 interface StMembershipType {
@@ -44,12 +49,29 @@ interface StMembershipType {
 }
 
 function isoToday(): string {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isoDate(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const d = s.slice(0, 10);
+  if (d.startsWith('0001-')) return null;
+  return d;
+}
+
+/** Earliest end date (cancellation or expiration). null = still open. */
+function effectiveEnd(m: StMembership): string | null {
+  const cancel = isoDate(m.cancellationDate);
+  const expire = isoDate(m.to);
+  if (!cancel && !expire) return null;
+  if (!cancel) return expire;
+  if (!expire) return cancel;
+  return cancel < expire ? cancel : expire;
 }
 
 export async function syncMemberships(trigger: SyncTrigger): Promise<MembershipsSyncResult> {
   const today = isoToday();
+  const monthKey = today.slice(0, 7); // YYYY-MM
   const start = await startSyncRun({
     source: MEMBERSHIPS_SOURCE,
     trigger,
@@ -65,12 +87,14 @@ export async function syncMemberships(trigger: SyncTrigger): Promise<Memberships
       membershipsFetched: 0,
       tiersWritten: 0,
       totalActive: 0,
+      totalNewThisMonth: 0,
+      totalCanceledThisMonth: 0,
     };
   }
   const runId = start.runId;
 
   try {
-    // 1. Fetch the full membership-type list — we need names, not just IDs.
+    // 1. Membership-type list (for names).
     const types = await collectResource<StMembershipType>({
       path: '/memberships/v2/tenant/{tenant}/membership-types',
     });
@@ -79,43 +103,61 @@ export async function syncMemberships(trigger: SyncTrigger): Promise<Memberships
       if (t.id != null && t.name) typeNameById.set(t.id, t.name);
     }
 
-    // 2. Fetch all currently-active memberships.
+    // 2. Pull every membership — any status — so we can count new + canceled
+    //    this month per type alongside today's active count.
     const memberships = await collectResource<StMembership>({
       path: '/memberships/v2/tenant/{tenant}/memberships',
-      query: { status: 'Active' },
+      query: {},
     });
-    // Belt-and-braces: ST's `active` flag matches the status filter 99% of
-    // the time but filter again just in case the endpoint returns stale rows.
-    const active = memberships.filter((m) => m.active !== false && m.status === 'Active');
 
-    // 3. Aggregate active count per type id.
-    const countByType = new Map<number, number>();
-    for (const m of active) {
+    // 3. Aggregate per type.
+    type Agg = { active: number; newThisMonth: number; canceledThisMonth: number };
+    const perType = new Map<number, Agg>();
+    for (const m of memberships) {
       if (m.membershipTypeId == null) continue;
-      countByType.set(m.membershipTypeId, (countByType.get(m.membershipTypeId) ?? 0) + 1);
+      const from = isoDate(m.from);
+      if (!from) continue;
+      const endEff = effectiveEnd(m);
+      const agg = perType.get(m.membershipTypeId) ?? { active: 0, newThisMonth: 0, canceledThisMonth: 0 };
+
+      // Active right now
+      if (from <= today && (!endEff || endEff > today)) agg.active += 1;
+      // New this calendar month
+      if (from.slice(0, 7) === monthKey) agg.newThisMonth += 1;
+      // Canceled / expired this calendar month
+      if (endEff && endEff.slice(0, 7) === monthKey) agg.canceledThisMonth += 1;
+
+      perType.set(m.membershipTypeId, agg);
     }
 
-    // 4. Build rows — one per type with activeEnd = count.
+    // 4. Build upsert rows.
     const rows: (typeof membershipDaily.$inferInsert)[] = [];
-    for (const [typeId, count] of countByType) {
+    let totalActive = 0;
+    let totalNew = 0;
+    let totalCanceled = 0;
+    for (const [typeId, agg] of perType) {
+      if (agg.active === 0 && agg.newThisMonth === 0 && agg.canceledThisMonth === 0) continue;
       const name = typeNameById.get(typeId) ?? `Type ${typeId}`;
       rows.push({
         membershipName: name,
         reportDate: today,
-        activeEnd: count,
-        newSales: 0,
-        canceled: 0,
-        netChange: 0,
+        activeEnd: agg.active,
+        newSales: agg.newThisMonth,
+        canceled: agg.canceledThisMonth,
+        netChange: agg.newThisMonth - agg.canceledThisMonth,
         priceCents: 0,
         sourceReportId: MEMBERSHIPS_SOURCE,
       });
+      totalActive += agg.active;
+      totalNew += agg.newThisMonth;
+      totalCanceled += agg.canceledThisMonth;
     }
 
     let written = 0;
     if (rows.length > 0) {
       const database = db();
 
-      // Wipe seed rows first so they stop appearing as phantom tiers.
+      // Wipe seed rows so they stop appearing as phantom tiers.
       await database
         .delete(membershipDaily)
         .where(eq(membershipDaily.sourceReportId, 'seed'));
@@ -129,6 +171,9 @@ export async function syncMemberships(trigger: SyncTrigger): Promise<Memberships
             target: [membershipDaily.membershipName, membershipDaily.reportDate],
             set: {
               activeEnd: sql.raw(`excluded.active_end`),
+              newSales: sql.raw(`excluded.new_sales`),
+              canceled: sql.raw(`excluded.canceled`),
+              netChange: sql.raw(`excluded.net_change`),
               sourceReportId: sql.raw(`excluded.source_report_id`),
               syncedAt: new Date(),
             },
@@ -137,7 +182,6 @@ export async function syncMemberships(trigger: SyncTrigger): Promise<Memberships
       }
     }
 
-    const totalActive = active.length;
     await finishSyncRunSuccess(runId, {
       rowsFetched: memberships.length,
       rowsUpserted: written,
@@ -149,6 +193,8 @@ export async function syncMemberships(trigger: SyncTrigger): Promise<Memberships
       membershipsFetched: memberships.length,
       tiersWritten: written,
       totalActive,
+      totalNewThisMonth: totalNew,
+      totalCanceledThisMonth: totalCanceled,
     };
   } catch (err) {
     const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);

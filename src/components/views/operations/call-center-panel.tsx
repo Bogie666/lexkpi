@@ -50,7 +50,7 @@ export function CallCenterPanel({ data, compareMode }: CallCenterPanelProps) {
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         <Panel padding="tight">
           <Stat
-            label="Booked today"
+            label="Booked"
             value={data.kpis.booked.value}
             unit="count"
             comparison={data.kpis.booked}
