@@ -37,8 +37,18 @@ export interface UpcomingAppointmentsResponse {
   tomorrowCount: number;
   windowStart: string;
   windowEnd: string;
-  /** Appointments per day across the 7-day window. Indexed by date. */
-  byDay: Array<{ date: string; count: number }>;
+  /** Appointments per day across the 7-day window, each with a per-dept
+   *  segment breakdown so the chart can render stacked bars. */
+  byDay: Array<{
+    date: string;
+    count: number;
+    depts: Array<{
+      code: string | null;
+      name: string;
+      count: number;
+    }>;
+    topJobTypes: Array<{ name: string; count: number }>;
+  }>;
   /** Top job types across all depts. */
   topJobTypes: Array<{ name: string; count: number }>;
   groups: Array<{
@@ -141,7 +151,13 @@ export async function GET() {
     byType: Map<string, number>;
   };
   const byDept = new Map<string, DeptAgg>();
-  const byDay = new Map<string, number>();
+  // Per-day: total count, count by dept, count by job type.
+  type DailyBreakdown = {
+    total: number;
+    depts: Map<string, { code: string | null; name: string; count: number }>;
+    types: Map<string, number>;
+  };
+  const perDay = new Map<string, DailyBreakdown>();
   const typeTotals = new Map<string, number>();
   const tomorrow = shiftDate(today, 1);
 
@@ -167,18 +183,42 @@ export async function GET() {
     byDept.set(deptKey, entry);
 
     const day = a.start.slice(0, 10);
-    byDay.set(day, (byDay.get(day) ?? 0) + 1);
+    const daily = perDay.get(day) ?? {
+      total: 0,
+      depts: new Map(),
+      types: new Map(),
+    };
+    daily.total += 1;
+    const dailyDept = daily.depts.get(deptKey) ?? {
+      code: bu?.code ?? null,
+      name: deptName,
+      count: 0,
+    };
+    dailyDept.count += 1;
+    daily.depts.set(deptKey, dailyDept);
+    daily.types.set(typeName, (daily.types.get(typeName) ?? 0) + 1);
+    perDay.set(day, daily);
 
     typeTotals.set(typeName, (typeTotals.get(typeName) ?? 0) + 1);
   }
 
   // Build a complete per-day list across the full 7-day window (including
-  // zero days) so the chart renders consistently.
-  const byDayArr: Array<{ date: string; count: number }> = [];
-  for (let i = 0; i < 7; i++) {
+  // zero days) so the chart renders consistently. Each day carries its
+  // own dept + top-type segmentation.
+  const byDayArr = Array.from({ length: 7 }, (_, i) => {
     const d = shiftDate(today, i);
-    byDayArr.push({ date: d, count: byDay.get(d) ?? 0 });
-  }
+    const daily = perDay.get(d);
+    if (!daily) return { date: d, count: 0, depts: [], topJobTypes: [] };
+    return {
+      date: d,
+      count: daily.total,
+      depts: Array.from(daily.depts.values()).sort((a, b) => b.count - a.count),
+      topJobTypes: Array.from(daily.types.entries())
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5),
+    };
+  });
 
   const groups = Array.from(byDept.values())
     .map((g) => ({
@@ -198,8 +238,8 @@ export async function GET() {
 
   const body: UpcomingAppointmentsResponse = {
     totalAppointments: active.length,
-    todayCount: byDay.get(today) ?? 0,
-    tomorrowCount: byDay.get(tomorrow) ?? 0,
+    todayCount: perDay.get(today)?.total ?? 0,
+    tomorrowCount: perDay.get(tomorrow)?.total ?? 0,
     windowStart: today,
     windowEnd,
     byDay: byDayArr,

@@ -50,32 +50,82 @@ export function UpcomingAppointmentsPanel({ data }: UpcomingAppointmentsPanelPro
         </Panel>
       </div>
 
-      {/* Daily distribution */}
+      {/* Daily distribution — stacked by department */}
       <Panel
         eyebrow={`Next 7 days · ${fmtRange(data.windowStart, data.windowEnd)}`}
         title="By day"
+        right={
+          <span className="text-[11px] uppercase tracking-[0.08em] text-muted">
+            Segments by dept · hover for count
+          </span>
+        }
         padding="cozy"
       >
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {data.byDay.map((d, i) => {
             const { dow, day } = dayLabel(d.date);
             const pct = (d.count / maxDay) * 100;
             const isToday = i === 0;
+            const segments = d.depts;
             return (
-              <div key={d.date} className="grid items-center gap-3" style={{ gridTemplateColumns: '70px 1fr 40px' }}>
-                <div className="flex flex-col leading-tight">
+              <div
+                key={d.date}
+                className="grid items-start gap-3"
+                style={{ gridTemplateColumns: '70px 1fr 40px' }}
+              >
+                <div className="flex flex-col leading-tight pt-1">
                   <span className={`text-[12px] font-medium ${isToday ? 'text-accent' : ''}`}>
                     {isToday ? 'Today' : dow}
                   </span>
                   <span className="text-[10px] text-muted">{day}</span>
                 </div>
-                <div className="h-3 bg-surface-2 rounded-full overflow-hidden">
+                <div className="flex flex-col gap-1.5 pt-1">
                   <div
-                    className="h-full bg-accent transition-[width] duration-300 ease-out"
-                    style={{ width: `${pct}%`, opacity: isToday ? 1 : 0.6 }}
-                  />
+                    className="flex h-3 bg-surface-2 rounded-full overflow-hidden"
+                    style={{ width: `${pct}%` }}
+                  >
+                    {segments.map((s) => {
+                      const segPct = d.count > 0 ? (s.count / d.count) * 100 : 0;
+                      const color = s.code ? `var(--d-${s.code})` : 'var(--muted)';
+                      return (
+                        <div
+                          key={s.code ?? s.name}
+                          className="h-full transition-[width] duration-300 ease-out"
+                          style={{
+                            width: `${segPct}%`,
+                            background: color,
+                            opacity: isToday ? 1 : 0.75,
+                          }}
+                          title={`${s.name}: ${s.count}`}
+                        />
+                      );
+                    })}
+                  </div>
+                  {segments.length > 0 && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted">
+                      {segments.slice(0, 6).map((s) => {
+                        const color = s.code ? `var(--d-${s.code})` : 'var(--muted)';
+                        return (
+                          <span key={s.code ?? s.name} className="flex items-center gap-1">
+                            <span
+                              className="h-1.5 w-1.5 rounded-full"
+                              style={{ background: color }}
+                              aria-hidden
+                            />
+                            <span>{s.name}</span>
+                            <span className="font-mono tabular-nums">{s.count}</span>
+                          </span>
+                        );
+                      })}
+                      {segments.length > 6 && (
+                        <span className="text-muted/60">+{segments.length - 6} more</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <span className="text-[13px] font-mono tabular-nums text-right">{d.count}</span>
+                <span className="text-[13px] font-mono tabular-nums text-right pt-1">
+                  {d.count}
+                </span>
               </div>
             );
           })}
