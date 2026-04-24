@@ -37,6 +37,33 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
+  const search = req.nextUrl.searchParams.get('search');
+
+  // Search mode: dump (id, name, active) for any employee whose name
+  // contains any of the search substrings (comma-separated).
+  if (search) {
+    try {
+      const emps = await collectResource<StAny>({
+        path: '/settings/v2/tenant/{tenant}/employees',
+        query: { active: 'any' },
+        pageSize: 500,
+      });
+      const needles = search.toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+      const hits = emps
+        .filter((e) => {
+          const name = String(e.name ?? '').toLowerCase();
+          return needles.some((n) => name.includes(n));
+        })
+        .map((e) => ({ id: e.id, name: e.name, active: e.active, role: e.role, businessUnitId: e.businessUnitId }));
+      return NextResponse.json({ ok: true, searched: needles, count: hits.length, hits });
+    } catch (err) {
+      return NextResponse.json(
+        { ok: false, error: err instanceof Error ? err.message : String(err) },
+        { status: 500 },
+      );
+    }
+  }
+
   const out: Record<string, unknown> = {};
 
   // 1. Technicians (dispatch role — the sales-oriented ones)
