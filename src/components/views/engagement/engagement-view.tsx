@@ -87,7 +87,11 @@ export function EngagementView() {
           )}
 
           {topQuery.data && topQuery.data.performers.length > 0 && (
-            <TechLeaderboard technicians={topQuery.data.performers} compareMode="none" />
+            <TechLeaderboard
+              technicians={topQuery.data.performers}
+              compareMode="none"
+              roleCode="hvac_tech"
+            />
           )}
         </>
       ) : (

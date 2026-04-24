@@ -163,6 +163,8 @@ export const technicianPeriod = pgTable(
     closedOpportunities: integer('closed_opportunities').notNull().default(0),
     closeRateBps: integer('close_rate_bps'),
     totalSalesCents: bigint('total_sales_cents', { mode: 'number' }).notNull().default(0),
+    /** TotalJobAverage from ST — displayed as "Avg ticket" on non-CA pages. */
+    totalJobAverageCents: bigint('total_job_average_cents', { mode: 'number' }).notNull().default(0),
     optionsPerOpportunity: integer('options_per_opportunity_x100'), // *100 since it's a decimal
     membershipsSold: integer('memberships_sold').notNull().default(0),
     leadsSet: integer('leads_set').notNull().default(0),

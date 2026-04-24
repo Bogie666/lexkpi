@@ -88,15 +88,30 @@ export interface Technician {
   ly?: number;               // cents
   closeRate: number;         // bps
   lyCloseRate?: number;      // bps
-  /** Sales opportunities (was previously CompletedJobs). */
+  /** Sales opportunities. */
   opps: number;
   lyOpps?: number;
-  /** Avg sale = TotalSales / ClosedOpportunities, in cents. */
+  /** Avg sale = TotalSales / ClosedOpportunities, in cents. (CA layout.) */
   avgSale: number;
   lyAvgSale?: number;
-  /** Options per opportunity, multiplied by 100 (e.g., 370 = 3.7). */
+  /** Avg ticket = TotalJobAverage from ST, in cents. (Non-CA layout.) */
+  avgTicket: number;
+  lyAvgTicket?: number;
+  /** Options per opportunity × 100. (CA layout.) */
   options: number;
   lyOptions?: number;
+  /** CompletedJobs from ST. (Non-CA layout.) */
+  jobs: number;
+  lyJobs?: number;
+  /** Memberships sold. (Non-CA layout.) */
+  members: number;
+  lyMembers?: number;
+  /** Leads set — aka "Flips". (Non-CA layout.) */
+  flips: number;
+  lyFlips?: number;
+  /** Total tech-lead sales in cents — aka "Flip sales". (Non-CA.) */
+  flipSales: number;
+  lyFlipSales?: number;
   trend: 'up' | 'down' | 'flat';
   spark: number[];
   lySpark?: number[];

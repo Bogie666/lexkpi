@@ -81,6 +81,13 @@ async function runSchema(): Promise<{
     ADD COLUMN IF NOT EXISTS avg_call_time_sec integer
   `;
 
+  // total_job_average_cents added to technician_period — used for
+  // 'Avg ticket' column on non-CA tech pages (TotalJobAverage from ST).
+  await sql`
+    ALTER TABLE technician_period
+    ADD COLUMN IF NOT EXISTS total_job_average_cents bigint NOT NULL DEFAULT 0
+  `;
+
   // All technician role leaderboards sort by closed revenue. HVAC Tech
   // and Maint. originally seeded with avgTicket/jobs; patch them.
   const roleUpdate = await sql`
@@ -139,6 +146,7 @@ async function runSchema(): Promise<{
       'financial_daily.closed_opportunities',
       'estimate_analysis.job_id',
       'call_center_daily.avg_call_time_sec',
+      'technician_period.total_job_average_cents',
     ],
     roleMetricUpdated: (roleUpdate as { code: string }[]).map((r) => r.code),
   };

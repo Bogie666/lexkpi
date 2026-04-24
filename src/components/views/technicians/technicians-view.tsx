@@ -95,7 +95,11 @@ export function TechniciansView() {
             />
           )}
 
-          <TechLeaderboard technicians={data.technicians} compareMode={params.compare} />
+          <TechLeaderboard
+            technicians={data.technicians}
+            compareMode={params.compare}
+            roleCode={data.role.code}
+          />
         </>
       )}
     </div>

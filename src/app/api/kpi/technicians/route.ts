@@ -33,7 +33,12 @@ interface TechAgg {
   closed: number;           // ClosedOpportunities
   avgCloseBps: number;
   avgSaleCents: number;     // TotalSales / ClosedOpportunities
+  avgTicketCents: number;   // TotalJobAverage
   options: number;          // OptionsPerOpportunity × 100
+  jobs: number;             // CompletedJobs
+  members: number;          // MembershipsSold
+  flips: number;            // LeadsSet
+  flipSalesCents: number;   // TotalLeadSales (cents)
 }
 
 /**
@@ -66,7 +71,12 @@ async function techsForWindow(roleCode: string, window: Window): Promise<TechAgg
       closed,
       avgCloseBps: Number(r.closeRateBps ?? 0),
       avgSaleCents: closed > 0 ? Math.round(revenue / closed) : 0,
+      avgTicketCents: Number(r.totalJobAverageCents ?? 0),
       options: Number(r.optionsPerOpportunity ?? 0),
+      jobs: Number(r.completedJobs),
+      members: Number(r.membershipsSold),
+      flips: Number(r.leadsSet),
+      flipSalesCents: Number(r.totalLeadSalesCents),
     };
   });
 }
@@ -150,8 +160,18 @@ export async function GET(req: NextRequest) {
       lyOpps: lyRow?.opps,
       avgSale: t.avgSaleCents,
       lyAvgSale: lyRow?.avgSaleCents,
+      avgTicket: t.avgTicketCents,
+      lyAvgTicket: lyRow?.avgTicketCents,
       options: t.options,
       lyOptions: lyRow?.options,
+      jobs: t.jobs,
+      lyJobs: lyRow?.jobs,
+      members: t.members,
+      lyMembers: lyRow?.members,
+      flips: t.flips,
+      lyFlips: lyRow?.flips,
+      flipSales: t.flipSalesCents,
+      lyFlipSales: lyRow?.flipSalesCents,
       trend,
       // Sparklines require daily data; reports only give us aggregates.
       // Empty arrays keep the UI happy — the chart just renders flat.

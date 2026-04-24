@@ -92,11 +92,17 @@ export async function GET(req: NextRequest) {
       ly,
       closeRate: Number(r.avgCloseBps),
       // technician_daily uses the older job-centric schema; map best-fit
-      // values into the new opps/avgSale/options shape so the Technician
-      // type stays consistent with the report-based path.
+      // values into the new shape. Fields that don't exist in the daily
+      // data default to 0 — this endpoint powers Engagement's Top
+      // Performers widget, not the Technicians leaderboard.
       opps: Number(r.jobs),
       avgSale: Number(r.avgTicketCents),
+      avgTicket: Number(r.avgTicketCents),
       options: 0,
+      jobs: Number(r.jobs),
+      members: Number(r.memberships),
+      flips: 0,
+      flipSales: 0,
       trend,
       spark: [],
     };
