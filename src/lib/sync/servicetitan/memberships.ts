@@ -111,6 +111,9 @@ export async function syncMemberships(trigger: SyncTrigger): Promise<Memberships
     });
 
     // 3. Aggregate per type.
+    //    - active: strict status='Active' match (date-derived 'active' can
+    //      over-count when an Expired/Suspended row has null end dates)
+    //    - newThisMonth / canceledThisMonth: date-based on from / effectiveEnd
     type Agg = { active: number; newThisMonth: number; canceledThisMonth: number };
     const perType = new Map<number, Agg>();
     for (const m of memberships) {
@@ -120,8 +123,9 @@ export async function syncMemberships(trigger: SyncTrigger): Promise<Memberships
       const endEff = effectiveEnd(m);
       const agg = perType.get(m.membershipTypeId) ?? { active: 0, newThisMonth: 0, canceledThisMonth: 0 };
 
-      // Active right now
-      if (from <= today && (!endEff || endEff > today)) agg.active += 1;
+      // Active right now — trust ST's status label rather than deriving
+      // from dates. Matches ST's own Active count exactly.
+      if (m.status === 'Active') agg.active += 1;
       // New this calendar month
       if (from.slice(0, 7) === monthKey) agg.newThisMonth += 1;
       // Canceled / expired this calendar month
