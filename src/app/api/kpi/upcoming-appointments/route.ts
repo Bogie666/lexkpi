@@ -215,8 +215,7 @@ export async function GET() {
       depts: Array.from(daily.depts.values()).sort((a, b) => b.count - a.count),
       topJobTypes: Array.from(daily.types.entries())
         .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5),
+        .sort((a, b) => b.count - a.count),
     };
   });
 

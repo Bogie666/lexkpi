@@ -122,6 +122,27 @@ export function UpcomingAppointmentsPanel({ data }: UpcomingAppointmentsPanelPro
                       )}
                     </div>
                   )}
+                  {d.topJobTypes.length > 0 && (
+                    <details className="group mt-1">
+                      <summary className="cursor-pointer text-[11px] text-muted hover:text-foreground list-none flex items-center gap-1.5">
+                        <span className="transition-transform group-open:rotate-90" aria-hidden>›</span>
+                        <span>
+                          {d.topJobTypes.length} job type{d.topJobTypes.length === 1 ? '' : 's'}
+                        </span>
+                      </summary>
+                      <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 pl-3 border-l border-border/60">
+                        {d.topJobTypes.map((t) => (
+                          <div
+                            key={t.name}
+                            className="flex items-center justify-between text-[11px]"
+                          >
+                            <span className="text-muted truncate pr-2">{t.name}</span>
+                            <span className="font-mono tabular-nums">{t.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                 </div>
                 <span className="text-[13px] font-mono tabular-nums text-right pt-1">
                   {d.count}
