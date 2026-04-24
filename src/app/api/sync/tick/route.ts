@@ -11,7 +11,17 @@ import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { syncRuns } from '@/db/schema';
 import { syncFinancial, FINANCIAL_SOURCE } from '@/lib/sync/servicetitan/financial';
+import { syncTechnicianReports, TECHNICIAN_REPORTS_SOURCE } from '@/lib/sync/servicetitan/technician-reports';
 import { trailingDays } from '@/lib/sync/window';
+
+function mtdWindow(): { from: string; to: string } {
+  const today = new Date();
+  const from = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1))
+    .toISOString()
+    .slice(0, 10);
+  const to = today.toISOString().slice(0, 10);
+  return { from, to };
+}
 
 // Silence the unused eq import when we remove the success filter below.
 void eq;
@@ -30,6 +40,11 @@ const SOURCES: SourceConfig[] = [
     source: FINANCIAL_SOURCE,
     minIntervalMin: 30,
     run: () => syncFinancial(trailingDays(7), 'cron'),
+  },
+  {
+    source: TECHNICIAN_REPORTS_SOURCE,
+    minIntervalMin: 30, // 2x per hour
+    run: () => syncTechnicianReports(mtdWindow(), 'cron'),
   },
   // Additional sources land here as they're ported.
 ];

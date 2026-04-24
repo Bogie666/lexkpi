@@ -1,15 +1,20 @@
 /**
- * /api/kpi/technicians — aggregates technician_daily over the window per
- * technician, computes team rollups + individual ranks, and returns the
- * response shape the UI already expects.
+ * /api/kpi/technicians — reads pre-aggregated rows from
+ * `technician_period`, populated from ST's role-specific Tech KPI
+ * reports. Handles period comparison (LY / LY2) by reading the same
+ * role rows for the shifted windows.
+ *
+ * Sparklines are disabled in this path (the report is period-aggregated,
+ * not daily). If we need them back, layer in a daily sync later and
+ * fall back to technician_daily for the sparkline data only.
  */
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { and, eq, gte, lte, sql, asc } from 'drizzle-orm';
+import { and, eq, asc } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { technicianDaily, technicianRoles, employees } from '@/db/schema';
-import { resolvePeriod, daysInWindow, type Window } from '@/lib/period';
+import { technicianPeriod, technicianRoles, employees } from '@/db/schema';
+import { resolvePeriod, type Window } from '@/lib/period';
 import type {
   CompareValue,
   Role,
@@ -30,71 +35,37 @@ interface TechAgg {
   memberships: number;
 }
 
-async function aggregateByTech(roleCode: string, window: Window): Promise<TechAgg[]> {
+/**
+ * Map role_code → list of technicians. Pulls exactly matching
+ * (role, period_start, period_end) rows. Returns empty if no sync has
+ * run for that window yet.
+ */
+async function techsForWindow(roleCode: string, window: Window): Promise<TechAgg[]> {
   const database = db();
   const rows = await database
-    .select({
-      employeeId: technicianDaily.employeeId,
-      employeeName: technicianDaily.employeeName,
-      departmentCode: technicianDaily.departmentCode,
-      revenue: sql<number>`COALESCE(SUM(${technicianDaily.revenueCents}), 0)`,
-      jobs: sql<number>`COALESCE(SUM(${technicianDaily.jobsCompleted}), 0)`,
-      avgCloseBps: sql<number>`COALESCE(AVG(${technicianDaily.closeRateBps})::int, 0)`,
-      avgTicketCents: sql<number>`COALESCE(AVG(${technicianDaily.avgTicketCents})::bigint, 0)`,
-      memberships: sql<number>`COALESCE(SUM(${technicianDaily.memberships}), 0)`,
-    })
-    .from(technicianDaily)
+    .select()
+    .from(technicianPeriod)
     .where(
       and(
-        eq(technicianDaily.roleCode, roleCode),
-        gte(technicianDaily.reportDate, window.from),
-        lte(technicianDaily.reportDate, window.to),
-      ),
-    )
-    .groupBy(technicianDaily.employeeId, technicianDaily.employeeName, technicianDaily.departmentCode);
-
-  return rows.map((r) => ({
-    employeeId: r.employeeId,
-    employeeName: r.employeeName,
-    departmentCode: r.departmentCode,
-    revenue: Number(r.revenue),
-    jobs: Number(r.jobs),
-    avgCloseBps: Number(r.avgCloseBps),
-    avgTicketCents: Number(r.avgTicketCents),
-    memberships: Number(r.memberships),
-  }));
-}
-
-async function sparkByTech(roleCode: string, window: Window, employeeIds: number[]) {
-  if (!employeeIds.length) return new Map<number, number[]>();
-  const database = db();
-  const days = daysInWindow(window);
-  const rows = await database
-    .select({
-      employeeId: technicianDaily.employeeId,
-      reportDate: technicianDaily.reportDate,
-      revenue: technicianDaily.revenueCents,
-    })
-    .from(technicianDaily)
-    .where(
-      and(
-        eq(technicianDaily.roleCode, roleCode),
-        gte(technicianDaily.reportDate, window.from),
-        lte(technicianDaily.reportDate, window.to),
+        eq(technicianPeriod.roleCode, roleCode),
+        eq(technicianPeriod.periodStart, window.from),
+        eq(technicianPeriod.periodEnd, window.to),
       ),
     );
-
-  const byEmpDay = new Map<number, Map<string, number>>();
-  for (const r of rows) {
-    if (!byEmpDay.has(r.employeeId)) byEmpDay.set(r.employeeId, new Map());
-    byEmpDay.get(r.employeeId)!.set(r.reportDate, Number(r.revenue));
-  }
-  const out = new Map<number, number[]>();
-  for (const id of employeeIds) {
-    const dayMap = byEmpDay.get(id) ?? new Map();
-    out.set(id, days.map((d) => dayMap.get(d) ?? 0));
-  }
-  return out;
+  return rows.map((r) => {
+    const jobs = Number(r.completedJobs);
+    const revenue = Number(r.totalSalesCents);
+    return {
+      employeeId: Number(r.employeeId),
+      employeeName: r.employeeName,
+      departmentCode: r.technicianBusinessUnit,
+      revenue,
+      jobs,
+      avgCloseBps: Number(r.closeRateBps ?? 0),
+      avgTicketCents: jobs > 0 ? Math.round(revenue / jobs) : 0,
+      memberships: Number(r.membershipsSold),
+    };
+  });
 }
 
 function sortByRole(agg: TechAgg[], primary: Role['sortKey']): TechAgg[] {
@@ -103,7 +74,10 @@ function sortByRole(agg: TechAgg[], primary: Role['sortKey']): TechAgg[] {
     primary === 'jobs' ? 'jobs' :
     primary === 'closeRate' ? 'avgCloseBps' :
     'revenue';
-  return agg.slice().sort((a, b) => (b as TechAgg)[key as keyof TechAgg] as number - ((a as TechAgg)[key as keyof TechAgg] as number));
+  return agg.slice().sort((a, b) =>
+    ((b as TechAgg)[key as keyof TechAgg] as number) -
+    ((a as TechAgg)[key as keyof TechAgg] as number)
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -111,7 +85,10 @@ export async function GET(req: NextRequest) {
   const roleCode = params.get('role') ?? 'comfort_advisor';
 
   const database = db();
-  const roleRows = await database.select().from(technicianRoles).orderBy(asc(technicianRoles.sortOrder));
+  const roleRows = await database
+    .select()
+    .from(technicianRoles)
+    .orderBy(asc(technicianRoles.sortOrder));
   const roles: Role[] = roleRows.map((r) => ({
     code: r.code,
     name: r.name,
@@ -127,19 +104,16 @@ export async function GET(req: NextRequest) {
   });
 
   const [cur, ly, ly2] = await Promise.all([
-    aggregateByTech(role.code, period.cur),
-    aggregateByTech(role.code, period.ly),
-    aggregateByTech(role.code, period.ly2),
+    techsForWindow(role.code, period.cur),
+    techsForWindow(role.code, period.ly),
+    techsForWindow(role.code, period.ly2),
   ]);
 
   const sorted = sortByRole(cur, role.sortKey);
   const employeeIds = sorted.map((t) => t.employeeId);
-  const curSparks = await sparkByTech(role.code, period.cur, employeeIds);
-  const lySparks = await sparkByTech(role.code, period.ly, employeeIds);
-
   const lyByEmp = new Map(ly.map((r) => [r.employeeId, r]));
 
-  // Employee photo URLs (if set) via JOIN-less lookup
+  // Photos from employees dimension, if ever populated.
   const photos = new Map<number, string | null>();
   if (employeeIds.length) {
     const empRows = await database
@@ -175,22 +149,49 @@ export async function GET(req: NextRequest) {
       lyAvgTicket: lyRow?.avgTicketCents,
       memberships: t.memberships,
       trend,
-      spark: curSparks.get(t.employeeId) ?? [],
-      lySpark: lySparks.get(t.employeeId),
+      // Sparklines require daily data; reports only give us aggregates.
+      // Empty arrays keep the UI happy — the chart just renders flat.
+      spark: [],
+      lySpark: [],
     };
   });
 
-  // Team rollup
-  const sum = (arr: TechAgg[], pick: (a: TechAgg) => number) => arr.reduce((s, a) => s + pick(a), 0);
+  const sum = (arr: TechAgg[], pick: (a: TechAgg) => number) =>
+    arr.reduce((s, a) => s + pick(a), 0);
   const avg = (arr: TechAgg[], pick: (a: TechAgg) => number) =>
     arr.length === 0 ? 0 : Math.round(arr.reduce((s, a) => s + pick(a), 0) / arr.length);
 
   const team: TechniciansResponse['team'] = {
-    revenue: compareValue(sum(cur, (a) => a.revenue), sum(ly, (a) => a.revenue), sum(ly2, (a) => a.revenue), 'cents'),
-    closeRate: compareValue(avg(cur, (a) => a.avgCloseBps), avg(ly, (a) => a.avgCloseBps), avg(ly2, (a) => a.avgCloseBps), 'bps'),
-    avgTicket: compareValue(avg(cur, (a) => a.avgTicketCents), avg(ly, (a) => a.avgTicketCents), avg(ly2, (a) => a.avgTicketCents), 'cents'),
-    jobsDone: compareValue(sum(cur, (a) => a.jobs), sum(ly, (a) => a.jobs), sum(ly2, (a) => a.jobs), 'count'),
-    memberships: compareValue(sum(cur, (a) => a.memberships), sum(ly, (a) => a.memberships), sum(ly2, (a) => a.memberships), 'count'),
+    revenue: compareValue(
+      sum(cur, (a) => a.revenue),
+      sum(ly, (a) => a.revenue),
+      sum(ly2, (a) => a.revenue),
+      'cents',
+    ),
+    closeRate: compareValue(
+      avg(cur, (a) => a.avgCloseBps),
+      avg(ly, (a) => a.avgCloseBps),
+      avg(ly2, (a) => a.avgCloseBps),
+      'bps',
+    ),
+    avgTicket: compareValue(
+      avg(cur, (a) => a.avgTicketCents),
+      avg(ly, (a) => a.avgTicketCents),
+      avg(ly2, (a) => a.avgTicketCents),
+      'cents',
+    ),
+    jobsDone: compareValue(
+      sum(cur, (a) => a.jobs),
+      sum(ly, (a) => a.jobs),
+      sum(ly2, (a) => a.jobs),
+      'count',
+    ),
+    memberships: compareValue(
+      sum(cur, (a) => a.memberships),
+      sum(ly, (a) => a.memberships),
+      sum(ly2, (a) => a.memberships),
+      'count',
+    ),
   };
 
   const body: TechniciansResponse = {
@@ -217,3 +218,6 @@ function compareValue(
 ): CompareValue {
   return { value, ly, ly2, unit };
 }
+
+// suppress unused — Window kept for future daily-sparkline layering
+void (null as Window | null);

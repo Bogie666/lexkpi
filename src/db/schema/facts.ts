@@ -138,6 +138,54 @@ export const estimateAnalysis = pgTable(
   }),
 );
 
+/**
+ * Technician performance snapshot — per-tech aggregates for a period
+ * (MTD, YTD, TTM, LY-MTD, etc.). Sourced from ST's "Ryan ... Dashboard
+ * Tech KPI" reports which come pre-filtered to the right techs per
+ * role. One row per (role, period, tech).
+ */
+export const technicianPeriod = pgTable(
+  'technician_period',
+  {
+    id: serial('id').primaryKey(),
+    roleCode: text('role_code').notNull(), // matches technician_roles.code
+    periodStart: date('period_start').notNull(),
+    periodEnd: date('period_end').notNull(),
+    employeeId: bigint('employee_id', { mode: 'number' }).notNull(),
+    employeeName: text('employee_name').notNull(),
+
+    // Core KPI fields pulled from the ST report.
+    completedJobs: integer('completed_jobs').notNull().default(0),
+    completedRevenueCents: bigint('completed_revenue_cents', { mode: 'number' }).notNull().default(0),
+    opportunity: integer('opportunity').notNull().default(0),
+    salesOpportunity: integer('sales_opportunity').notNull().default(0),
+    closedOpportunities: integer('closed_opportunities').notNull().default(0),
+    closeRateBps: integer('close_rate_bps'),
+    totalSalesCents: bigint('total_sales_cents', { mode: 'number' }).notNull().default(0),
+    optionsPerOpportunity: integer('options_per_opportunity_x100'), // *100 since it's a decimal
+    membershipsSold: integer('memberships_sold').notNull().default(0),
+    leadsSet: integer('leads_set').notNull().default(0),
+    totalLeadSalesCents: bigint('total_lead_sales_cents', { mode: 'number' }).notNull().default(0),
+
+    // Metadata from the report for display / filtering.
+    technicianBusinessUnit: text('technician_business_unit'),
+    technicianTrade: text('technician_trade'),
+
+    sourceReportId: text('source_report_id').notNull(),
+    syncedAt: timestamp('synced_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    uniq: uniqueIndex('tech_period_uniq').on(
+      t.roleCode,
+      t.periodStart,
+      t.periodEnd,
+      t.employeeId,
+    ),
+    roleIdx: index('tech_period_role_idx').on(t.roleCode),
+    periodIdx: index('tech_period_period_idx').on(t.periodStart, t.periodEnd),
+  }),
+);
+
 /** Membership daily — per-tier state. */
 export const membershipDaily = pgTable(
   'membership_daily',

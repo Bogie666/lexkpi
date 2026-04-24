@@ -70,8 +70,48 @@ async function runSchema(): Promise<{ tablesEnsured: string[]; columnsEnsured: s
     CREATE INDEX IF NOT EXISTS ea_job_idx ON estimate_analysis (job_id)
   `;
 
+  // technician_period — aggregated from ST's role-specific Tech KPI
+  // reports. Not daily; one row per (role, period, tech).
+  await sql`
+    CREATE TABLE IF NOT EXISTS technician_period (
+      id serial PRIMARY KEY,
+      role_code text NOT NULL,
+      period_start date NOT NULL,
+      period_end date NOT NULL,
+      employee_id bigint NOT NULL,
+      employee_name text NOT NULL,
+      completed_jobs integer NOT NULL DEFAULT 0,
+      completed_revenue_cents bigint NOT NULL DEFAULT 0,
+      opportunity integer NOT NULL DEFAULT 0,
+      sales_opportunity integer NOT NULL DEFAULT 0,
+      closed_opportunities integer NOT NULL DEFAULT 0,
+      close_rate_bps integer,
+      total_sales_cents bigint NOT NULL DEFAULT 0,
+      options_per_opportunity_x100 integer,
+      memberships_sold integer NOT NULL DEFAULT 0,
+      leads_set integer NOT NULL DEFAULT 0,
+      total_lead_sales_cents bigint NOT NULL DEFAULT 0,
+      technician_business_unit text,
+      technician_trade text,
+      source_report_id text NOT NULL,
+      synced_at timestamp DEFAULT now() NOT NULL
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS tech_period_uniq
+      ON technician_period (role_code, period_start, period_end, employee_id)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS tech_period_role_idx
+      ON technician_period (role_code)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS tech_period_period_idx
+      ON technician_period (period_start, period_end)
+  `;
+
   return {
-    tablesEnsured: ['business_units'],
+    tablesEnsured: ['business_units', 'technician_period'],
     columnsEnsured: [
       'financial_daily.closed_opportunities',
       'estimate_analysis.job_id',
