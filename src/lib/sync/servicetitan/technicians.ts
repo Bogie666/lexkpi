@@ -176,20 +176,46 @@ function isClosedOpportunity(
 }
 
 /**
- * Roster lookup: ST employee id → display name. Used to resolve the
- * tech attached to a job's soldById field.
+ * Roster lookup: ST employee-or-technician id → display name.
+ * ST's /settings/v2/employees endpoint only covers office staff and
+ * admin users. Most field techs live in a separate "technicians"
+ * roster, and their IDs get used as `soldById` on jobs they close.
+ * We union the employees endpoint with technicianName/Id pairs
+ * harvested from recent appointment-assignments so the soldById
+ * attribution can resolve to a real name in either case.
  */
-async function loadEmployeeNames(): Promise<Map<number, string>> {
+async function loadRosterNames(window: SyncWindow): Promise<Map<number, string>> {
+  const m = new Map<number, string>();
+
+  // 1. Employees endpoint — office, dispatchers, sales managers etc.
   const emps = await collectResource<StEmployee>({
     path: '/settings/v2/tenant/{tenant}/employees',
-    query: { active: 'true' },
+    query: { active: 'any' }, // include inactive — historical soldById still points to them
   });
-  const m = new Map<number, string>();
   for (const e of emps) {
     const fallback = [e.firstName, e.lastName].filter(Boolean).join(' ');
     const name = e.name || fallback || `emp#${e.id}`;
-    m.set(e.id, name);
+    m.set(e.id, name.replace(/\s*\*$/, '')); // strip trailing asterisks
   }
+
+  // 2. Technician roster via assignments in a ~90-day window around
+  //    the sync window. One assignment per tech is enough for the name.
+  const techs = await collectResource<{
+    technicianId?: number | null;
+    technicianName?: string | null;
+  }>({
+    path: '/dispatch/v2/tenant/{tenant}/appointment-assignments',
+    query: {
+      modifiedOnOrAfter: `${shiftDate(window.from, -90)}T00:00:00Z`,
+    },
+  });
+  for (const t of techs) {
+    if (!t.technicianId) continue;
+    // Don't override an employee-endpoint entry; only fill gaps.
+    if (m.has(t.technicianId)) continue;
+    if (t.technicianName) m.set(t.technicianId, t.technicianName);
+  }
+
   return m;
 }
 
@@ -222,7 +248,7 @@ export async function syncTechnicians(
       loadBuToDeptMap(),
       loadJobTypeThresholds(),
       loadSoldEstimateSubtotals(window),
-      loadEmployeeNames(),
+      loadRosterNames(window),
     ]);
 
     const jobs = await collectResource<StJob>({
@@ -321,9 +347,23 @@ export async function syncTechnicians(
       sourceReportId: TECHNICIANS_SOURCE,
     }));
 
+    // Purge old st_technicians rows in this window BEFORE inserting.
+    // Prior runs may have used different employeeIds (e.g. assignments'
+    // technicianId vs job.soldById); without this purge those stale
+    // rows linger and the dashboard shows a mix of both.
+    const database = db();
+    await database
+      .delete(technicianDaily)
+      .where(
+        and(
+          eq(technicianDaily.sourceReportId, TECHNICIANS_SOURCE),
+          gte(technicianDaily.reportDate, window.from),
+          lte(technicianDaily.reportDate, window.to),
+        ),
+      );
+
     let upserted = 0;
     if (rows.length > 0) {
-      const database = db();
       for (let i = 0; i < rows.length; i += 500) {
         const batch = rows.slice(i, i + 500);
         await database
@@ -349,8 +389,7 @@ export async function syncTechnicians(
         upserted += batch.length;
       }
       // Wipe seed rows for the window so fake techs disappear.
-      const database2 = db();
-      await database2
+      await database
         .delete(technicianDaily)
         .where(
           and(
