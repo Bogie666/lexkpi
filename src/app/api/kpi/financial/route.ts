@@ -293,10 +293,15 @@ export async function GET(req: NextRequest) {
   // Split by age: 'hot' = created ≤ 7 days ago, 'warm' = 8–30 days ago.
   // Older than 30 is dropped — stale estimates rarely convert.
   //
+  // We restrict by raw OpportunityStatus to actively-being-worked leads.
+  // ST returns "Not Attempted" for unworked opportunities — those would
+  // inflate the pipeline number 2-3x if counted. "Open" and "In Progress"
+  // are the kept set. Anything else (NULL raw, weird statuses) falls back
+  // to the normalized 'unsold' bucket only if explicitly Open-ish.
+  //
   // Techs leave good/better/best per job, so after fetching raw rows we
   // group by (jobId-or-estimateId, dept) and average subtotals before
-  // bucketing. Done in JS since the dataset is small and drizzle's SQL
-  // templating gets finicky with conditional-aggregate SQL.
+  // bucketing.
   const thirtyAgoDate = new Date(Date.now() - 30 * 86_400_000);
   const thirtyAgo = thirtyAgoDate.toISOString().slice(0, 10);
   const sevenAgoDate = new Date(Date.now() - 7 * 86_400_000);
@@ -307,12 +312,18 @@ export async function GET(req: NextRequest) {
       createdOn: estimateAnalysis.createdOn,
       subtotalCents: estimateAnalysis.subtotalCents,
       departmentCode: estimateAnalysis.departmentCode,
+      statusRaw: estimateAnalysis.opportunityStatusRaw,
     })
     .from(estimateAnalysis)
     .where(
       and(
         eq(estimateAnalysis.opportunityStatus, 'unsold'),
         gte(estimateAnalysis.createdOn, thirtyAgo),
+        // Match only ACTIVELY-followed-up estimates. The legacy
+        // st_estimates sync wrote NULL into this column, so we keep
+        // rows where it's NULL too (back-compat: those were filtered by
+        // the source endpoint to status=Open already).
+        sql`(${estimateAnalysis.opportunityStatusRaw} IS NULL OR LOWER(${estimateAnalysis.opportunityStatusRaw}) IN ('open', 'in progress', 'in-progress', 'inprogress', 'pending'))`,
       ),
     );
 

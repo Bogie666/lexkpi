@@ -122,6 +122,11 @@ export const estimateAnalysis = pgTable(
     // avoid triple-counting a single customer's pipeline.
     jobId: bigint('job_id', { mode: 'number' }),
     opportunityStatus: text('opportunity_status').notNull(), // 'won' | 'unsold' | 'dismissed'
+    /** Raw ST OpportunityStatus string ("Open", "Not Attempted", "Sold",
+     *  "Dismissed", etc.). Lets the financial page filter potential
+     *  revenue to actively-being-worked leads only — without this we'd
+     *  count "Not Attempted" estimates as live pipeline. */
+    opportunityStatusRaw: text('opportunity_status_raw'),
     soldOn: date('sold_on'),
     createdOn: date('created_on').notNull(),
     subtotalCents: bigint('subtotal_cents', { mode: 'number' }).notNull().default(0),

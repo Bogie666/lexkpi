@@ -152,6 +152,8 @@ interface ParsedRow {
   estimateId: string;
   jobId: number | null;
   status: 'won' | 'unsold' | 'dismissed';
+  /** Raw ST OpportunityStatus string for finer downstream filtering. */
+  statusRaw: string;
   createdOn: string;
   soldOn: string | null;
   subtotalCents: number;
@@ -182,7 +184,7 @@ function parseRow(fields: string[], row: unknown[]): ParsedRow | null {
 
   const statusRaw = asString(
     pick(row, fields, ['OpportunityStatus', 'EstimateStatus', 'Status']),
-  );
+  ).trim();
   const status = normalizeStatus(statusRaw);
   if (!status) return null;
 
@@ -235,6 +237,7 @@ function parseRow(fields: string[], row: unknown[]): ParsedRow | null {
     estimateId,
     jobId,
     status,
+    statusRaw,
     createdOn,
     soldOn,
     subtotalCents,
@@ -368,6 +371,7 @@ export async function syncEstimateAnalysisReport(
         estimateId: p.estimateId,
         jobId: p.jobId,
         opportunityStatus: p.status,
+        opportunityStatusRaw: p.statusRaw || null,
         soldOn: p.soldOn,
         createdOn: p.createdOn,
         subtotalCents: p.subtotalCents,
@@ -404,6 +408,7 @@ export async function syncEstimateAnalysisReport(
             set: {
               jobId: sql.raw(`excluded.job_id`),
               opportunityStatus: sql.raw(`excluded.opportunity_status`),
+              opportunityStatusRaw: sql.raw(`excluded.opportunity_status_raw`),
               soldOn: sql.raw(`excluded.sold_on`),
               createdOn: sql.raw(`excluded.created_on`),
               subtotalCents: sql.raw(`excluded.subtotal_cents`),
