@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { linearScale, niceTicks } from '@/lib/charts/scale';
 import { fmtMoney } from '@/lib/format/money';
 import { fmtPercent } from '@/lib/format/percent';
@@ -21,6 +21,12 @@ export interface ComboChartProps {
   className?: string;
 }
 
+function fmtFull(v: number, unit: 'bps' | 'cents' | 'count'): string {
+  if (unit === 'bps') return fmtPercent(v, { decimals: 1 });
+  if (unit === 'cents') return fmtMoney(v);
+  return v.toLocaleString('en-US');
+}
+
 const PAD = { top: 20, right: 52, bottom: 32, left: 52 };
 
 function fmt(v: number, unit: 'bps' | 'cents' | 'count'): string {
@@ -38,7 +44,8 @@ export function ComboChart({
   accent = 'var(--accent)',
   className,
 }: ComboChartProps) {
-  const { barTicks, lineTicks, bars, linePath, linePoints } = useMemo(() => {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const { barTicks, lineTicks, bars, linePath, linePoints, slot } = useMemo(() => {
     const barMax = Math.max(...data.map((d) => d.bar), 1);
     const lineMin = Math.min(...data.map((d) => d.line));
     const lineMax = Math.max(...data.map((d) => d.line));
@@ -80,7 +87,7 @@ export function ComboChart({
 
     const linePoints = data.map((d, i) => ({ cx: x(i), cy: yLine(d.line) }));
 
-    return { barTicks, lineTicks, bars, linePath, linePoints, yLine };
+    return { barTicks, lineTicks, bars, linePath, linePoints, slot };
   }, [data, height, width]);
 
   const yForBar = (v: number) => {
@@ -93,12 +100,17 @@ export function ComboChart({
     return linearScale([min, max], [height - PAD.bottom, PAD.top])(v);
   };
 
+  const hover = hoverIdx != null ? data[hoverIdx] : null;
+  const hoverBar = hoverIdx != null ? bars[hoverIdx] : null;
+
   return (
+    <div className={`relative ${className ?? 'w-full h-full'}`}>
     <svg
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="xMidYMid meet"
-      className={className ?? 'w-full h-full'}
+      className="w-full h-full"
       role="img"
+      onMouseLeave={() => setHoverIdx(null)}
     >
       {/* Gridlines based on bar ticks */}
       <g className="chart-grid">
@@ -199,6 +211,59 @@ export function ComboChart({
       >
         {lineAxis.label.toUpperCase()}
       </text>
+
+      {/* Hover crosshair on the active month */}
+      {hoverBar && (
+        <line
+          x1={hoverBar.xCenter}
+          x2={hoverBar.xCenter}
+          y1={PAD.top}
+          y2={height - PAD.bottom}
+          stroke="var(--muted)"
+          strokeOpacity={0.35}
+          strokeDasharray="2 3"
+          pointerEvents="none"
+        />
+      )}
+
+      {/* Full-slot hit-targets so hover works between bars */}
+      {bars.map((b) => (
+        <rect
+          key={`hit-${b.i}`}
+          x={PAD.left + slot * b.i}
+          y={PAD.top}
+          width={slot}
+          height={height - PAD.top - PAD.bottom}
+          fill="transparent"
+          onMouseEnter={() => setHoverIdx(b.i)}
+        />
+      ))}
     </svg>
+
+    {hover && hoverBar && (
+      <div
+        className="pointer-events-none absolute -translate-x-1/2 -translate-y-full rounded-md border border-border bg-surface text-[12px] px-2.5 py-1.5 shadow-lg z-10 whitespace-nowrap"
+        style={{
+          left: `${(hoverBar.xCenter / width) * 100}%`,
+          top: `${(hoverBar.top / height) * 100}%`,
+          marginTop: '-10px',
+        }}
+      >
+        <div className="font-mono tabular-nums text-[11px] text-muted mb-0.5">
+          {hover.label}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-sm" style={{ background: accent, opacity: 0.5 }} aria-hidden />
+          <span className="text-muted">{barAxis.label}</span>
+          <span className="font-mono tabular-nums">{fmtFull(hover.bar, barAxis.unit)}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="h-px w-2.5" style={{ background: accent }} aria-hidden />
+          <span className="text-muted">{lineAxis.label}</span>
+          <span className="font-mono tabular-nums">{fmtFull(hover.line, lineAxis.unit)}</span>
+        </div>
+      </div>
+    )}
+    </div>
   );
 }
