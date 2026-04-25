@@ -215,18 +215,13 @@ function parseRow(fields: string[], row: unknown[]): ParsedRow | null {
   }
   const buName = asString(pick(row, fields, ['BusinessUnit'])).trim() || null;
 
-  // TTC: prefer an explicit days column; otherwise derive from soldOn-createdOn.
+  // Time-to-close = (soldOn − createdOn) days when sold. The report's
+  // EstimateAge column is age-as-of-today, NOT close time, so a job sold
+  // the same day 6 months ago shows EstimateAge=180 — that would dump
+  // every won estimate into the "8+ days" bucket. Always derive from
+  // dates instead.
   let timeToCloseDays: number | null = null;
-  const ttcRaw = pick(row, fields, [
-    'TimeToCloseDays',
-    'DaysToClose',
-    'AgeDays',
-    'EstimateAge',
-  ]);
-  if (ttcRaw != null && ttcRaw !== '') {
-    const n = Number(ttcRaw);
-    if (Number.isFinite(n)) timeToCloseDays = Math.max(0, Math.round(n));
-  } else if (soldOn && createdOn) {
+  if (soldOn && createdOn) {
     const ms = Date.parse(soldOn) - Date.parse(createdOn);
     if (Number.isFinite(ms)) timeToCloseDays = Math.max(0, Math.round(ms / 86_400_000));
   }
