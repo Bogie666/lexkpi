@@ -217,7 +217,12 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   if (!authorized(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const mode = req.nextUrl.searchParams.get('mode') ?? 'schema-and-seed';
+  // Default mode is `schema` only — never run the seed unless explicitly
+  // requested with mode=schema-and-seed. The seed TRUNCATES every fact
+  // table (financial_daily, estimate_analysis, technician_daily, …) and
+  // replaces with synthetic data, which silently obliterates real ST sync
+  // data if anyone hits this endpoint with no params.
+  const mode = req.nextUrl.searchParams.get('mode') ?? 'schema';
   const out: Record<string, unknown> = { mode };
   try {
     if (mode === 'schema' || mode === 'migrate' || mode === 'schema-and-seed' || mode === 'migrate-and-seed') {
