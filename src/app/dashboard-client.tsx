@@ -3,6 +3,7 @@
 import { DashboardShell } from '@/components/layout/dashboard-shell';
 import { useDashboardParams } from '@/lib/state/url-params';
 import { FinancialView } from '@/components/views/financial/financial-view';
+import { AppointmentsView } from '@/components/views/appointments/appointments-view';
 import { TechniciansView } from '@/components/views/technicians/technicians-view';
 import { OperationsView } from '@/components/views/operations/operations-view';
 import { AnalyzeView } from '@/components/views/analyze/analyze-view';
@@ -15,6 +16,7 @@ export function DashboardClient() {
   return (
     <DashboardShell>
       {params.tab === 'financial' && <FinancialView />}
+      {params.tab === 'appointments' && <AppointmentsView />}
       {params.tab === 'technicians' && <TechniciansView />}
       {params.tab === 'operations' && <OperationsView />}
       {params.tab === 'engagement' && <EngagementView />}

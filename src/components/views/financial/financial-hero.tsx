@@ -34,7 +34,26 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
     </span>
   );
 
-  const xLabel = (t: (typeof trend)[number]) => String(Number(t.date.slice(-2)));
+  // X-axis label strategy: short windows show day-of-month; long windows
+  // (~60+ days) show abbreviated months on the 1st of each month and blank
+  // otherwise, so the user sees "Jan / Feb / Mar / Apr" instead of a wall
+  // of day numbers when YTD/QTD/TTM/L90 is active.
+  const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const longWindow = trend.length > 60;
+  const dayLabel = (t: (typeof trend)[number]) => String(Number(t.date.slice(-2)));
+  const monthLabel = (t: (typeof trend)[number]) => {
+    const day = Number(t.date.slice(-2));
+    if (day !== 1) return '';
+    const monthIdx = Number(t.date.slice(5, 7)) - 1;
+    return MONTH_ABBR[monthIdx] ?? '';
+  };
+  const xLabel = (t: (typeof trend)[number]) =>
+    longWindow ? monthLabel(t) : dayLabel(t);
+  const hoverLabel = (t: (typeof trend)[number]) => {
+    const monthIdx = Number(t.date.slice(5, 7)) - 1;
+    const day = Number(t.date.slice(-2));
+    return `${MONTH_ABBR[monthIdx] ?? ''} ${day}`;
+  };
 
   const chart = compareOn ? (
     <div className="flex flex-col gap-3 h-full">
@@ -43,6 +62,7 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
           data={
             trend.map((t) => ({
               label: xLabel(t),
+              hoverLabel: hoverLabel(t),
               actual: t.actual,
               ly: t.ly,
               ly2: t.ly2,
@@ -62,12 +82,14 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
         data={
           trend.map((t) => ({
             label: xLabel(t),
+            hoverLabel: hoverLabel(t),
             value: t.actual,
             target: t.target,
           })) satisfies AreaTrendPoint[]
         }
         height={260}
         unit="cents"
+        valueLabel="Revenue"
       />
     </div>
   );

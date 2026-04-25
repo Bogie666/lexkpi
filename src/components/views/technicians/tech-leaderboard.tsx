@@ -134,7 +134,12 @@ function CAColumns({
           >
             <RankCell rank={t.rank} />
             <TechCell tech={t} />
-            <td className="py-3 pr-4 text-right font-mono tabular-nums text-[14px] font-medium">
+            <td
+              className={cn(
+                'py-3 pr-4 text-right font-mono tabular-nums text-[14px] font-semibold',
+                t.rank === 1 && 'text-accent',
+              )}
+            >
               {fmtMoney(t.revenue)}
             </td>
             {compareOn && (
@@ -154,7 +159,13 @@ function CAColumns({
                 </div>
               </td>
             )}
-            <td className="py-3 pr-4 text-right font-mono tabular-nums text-[13px] hidden md:table-cell">
+            <td
+              className={cn(
+                'py-3 pr-4 text-right font-mono tabular-nums text-[13px] hidden md:table-cell',
+                t.closeRate >= 4500 && 'text-up',
+                t.closeRate < 2500 && 'text-warning',
+              )}
+            >
               {fmtPercent(t.closeRate, { decimals: 1 })}
             </td>
             {compareOn && (
@@ -252,7 +263,12 @@ function TechColumns({
           >
             <RankCell rank={t.rank} />
             <TechCell tech={t} />
-            <td className="py-3 pr-4 text-right font-mono tabular-nums text-[14px] font-medium">
+            <td
+              className={cn(
+                'py-3 pr-4 text-right font-mono tabular-nums text-[14px] font-semibold',
+                t.rank === 1 && 'text-accent',
+              )}
+            >
               {fmtMoney(t.revenue)}
             </td>
             {compareOn && (
@@ -272,7 +288,13 @@ function TechColumns({
                 </div>
               </td>
             )}
-            <td className="py-3 pr-4 text-right font-mono tabular-nums text-[13px] hidden md:table-cell">
+            <td
+              className={cn(
+                'py-3 pr-4 text-right font-mono tabular-nums text-[13px] hidden md:table-cell',
+                t.closeRate >= 4500 && 'text-up',
+                t.closeRate < 2500 && 'text-warning',
+              )}
+            >
               {fmtPercent(t.closeRate, { decimals: 1 })}
             </td>
             {compareOn && (

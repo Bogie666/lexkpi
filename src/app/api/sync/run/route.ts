@@ -11,6 +11,7 @@ import { syncFinancial } from '@/lib/sync/servicetitan/financial';
 import { syncJobs } from '@/lib/sync/servicetitan/jobs';
 import { syncMemberships } from '@/lib/sync/servicetitan/memberships';
 import { syncEstimates } from '@/lib/sync/servicetitan/estimates';
+import { syncEstimateAnalysisReport } from '@/lib/sync/servicetitan/estimate-analysis-report';
 import { syncTechnicians } from '@/lib/sync/servicetitan/technicians';
 import { syncTechnicianReports } from '@/lib/sync/servicetitan/technician-reports';
 import { syncCallcenter } from '@/lib/sync/servicetitan/callcenter';
@@ -22,7 +23,7 @@ export const dynamic = 'force-dynamic';
 // Vercel Pro allows up to 800s on Node.js serverless functions.
 export const maxDuration = 800;
 
-const SOURCES = ['financial', 'jobs', 'memberships', 'memberships-backfill', 'estimates', 'technicians', 'technician-reports', 'callcenter'] as const;
+const SOURCES = ['financial', 'jobs', 'memberships', 'memberships-backfill', 'estimates', 'estimate-analysis-report', 'technicians', 'technician-reports', 'callcenter'] as const;
 type Source = (typeof SOURCES)[number];
 
 function authorized(req: NextRequest): boolean {
@@ -77,6 +78,19 @@ export async function POST(req: NextRequest) {
       // of window.
       const result = await syncEstimates('manual');
       return NextResponse.json({ ok: true, source, ...result });
+    }
+    if (source === 'estimate-analysis-report') {
+      // Window-based: pulls ST report 399168856 for [from,to]. Default = TTM.
+      const winFromBody = from && to ? { from, to } : (() => {
+        const today = new Date();
+        const toISO = today.toISOString().slice(0, 10);
+        const f = new Date(today);
+        f.setUTCFullYear(f.getUTCFullYear() - 1);
+        f.setUTCDate(f.getUTCDate() + 1);
+        return { from: f.toISOString().slice(0, 10), to: toISO };
+      })();
+      const result = await syncEstimateAnalysisReport(winFromBody, 'manual');
+      return NextResponse.json({ ok: true, source, window: winFromBody, ...result });
     }
     if (source === 'technicians') {
       const result = await syncTechnicians(window, 'manual');

@@ -267,6 +267,15 @@ export async function GET(req: NextRequest) {
         parameters.push({ name: p.name, value: to });
       }
     }
+    // Allow ad-hoc extra params via querystring: ?p_DateType=CreatedOn&p_Foo=bar.
+    // Strips the `p_` prefix; useful for reports with required non-date params.
+    for (const [k, v] of req.nextUrl.searchParams.entries()) {
+      if (!k.startsWith('p_')) continue;
+      const name = k.slice(2);
+      // If the report def listed this param, prefer its exact name spelling.
+      const match = params.find((p) => p.name.toLowerCase() === name.toLowerCase());
+      parameters.push({ name: match?.name ?? name, value: v });
+    }
 
     const result = await runReport(
       token,

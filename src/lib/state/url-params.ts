@@ -24,6 +24,7 @@ export type CompareMode = (typeof COMPARE_MODES)[number];
 
 export const TABS = [
   'financial',
+  'appointments',
   'technicians',
   'operations',
   'engagement',
@@ -34,6 +35,7 @@ export type Tab = (typeof TABS)[number];
 
 export const COMPARE_SUPPORTED: Record<Tab, boolean> = {
   financial: true,
+  appointments: false,
   technicians: true,
   operations: true,
   engagement: false,
