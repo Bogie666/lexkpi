@@ -38,6 +38,8 @@ export interface EstimateAnalysisSyncResult {
   rowsUpserted: number;
   rowsDropped: number;
   unmappedBusinessUnitIds: number[];
+  /** BU display names that didn't match any business_units row by name. */
+  unmappedBusinessUnitNames: string[];
   windowFrom: string;
   windowTo: string;
 }
@@ -153,7 +155,10 @@ interface ParsedRow {
   createdOn: string;
   soldOn: string | null;
   subtotalCents: number;
+  /** Numeric BU id when the report exposes one, otherwise null. */
   businessUnitId: number | null;
+  /** BU display name for fallback lookup against business_units.name. */
+  businessUnitName: string | null;
   timeToCloseDays: number | null;
   tier: 'low' | 'mid' | 'high' | null;
 }
@@ -163,19 +168,34 @@ function parseRow(fields: string[], row: unknown[]): ParsedRow | null {
   const estimateId = asString(id).trim();
   if (!estimateId) return null;
 
-  const jobIdRaw = pick(row, fields, ['JobId', 'JobID']);
-  const jobIdNum = jobIdRaw == null || jobIdRaw === '' ? null : Number(jobIdRaw);
-  const jobId = Number.isFinite(jobIdNum) && jobIdNum !== null ? jobIdNum : null;
+  // ST report 399168856 doesn't expose a numeric JobId, but ParentJobNumber
+  // is usually a stringified integer and uniquely identifies the parent job.
+  const jobIdRaw = pick(row, fields, [
+    'JobId',
+    'JobID',
+    'ParentJobNumber',
+    'ParentJobId',
+  ]);
+  const jobIdNum =
+    jobIdRaw == null || jobIdRaw === '' ? null : Number(asString(jobIdRaw).trim());
+  const jobId = jobIdNum != null && Number.isFinite(jobIdNum) ? jobIdNum : null;
 
   const statusRaw = asString(
-    pick(row, fields, ['Status', 'EstimateStatus', 'OpportunityStatus']),
+    pick(row, fields, ['OpportunityStatus', 'EstimateStatus', 'Status']),
   );
   const status = normalizeStatus(statusRaw);
   if (!status) return null;
 
   const createdOn =
-    asISODate(pick(row, fields, ['CreatedOn', 'CreatedDate', 'DateCreated', 'EstimateDate'])) ??
-    asISODate(pick(row, fields, ['SoldOn', 'SoldDate']));
+    asISODate(
+      pick(row, fields, [
+        'CreationDate',
+        'CreatedOn',
+        'CreatedDate',
+        'DateCreated',
+        'EstimateDate',
+      ]),
+    ) ?? asISODate(pick(row, fields, ['SoldOn', 'SoldDate']));
   if (!createdOn) return null;
 
   const soldOn = asISODate(pick(row, fields, ['SoldOn', 'SoldDate', 'DateSold']));
@@ -185,16 +205,24 @@ function parseRow(fields: string[], row: unknown[]): ParsedRow | null {
   );
   const subtotalCents = Math.round(subtotalDollars * 100);
 
-  const buRaw = pick(row, fields, ['BusinessUnitId', 'BusinessUnitID', 'BusinessUnit']);
+  // Numeric BU id is rare in this report; the string `BusinessUnit` (a
+  // display name) is what's actually returned. We lookup the id later.
+  const buNumericRaw = pick(row, fields, ['BusinessUnitId', 'BusinessUnitID']);
   let businessUnitId: number | null = null;
-  if (buRaw != null && buRaw !== '') {
-    const n = Number(buRaw);
+  if (buNumericRaw != null && buNumericRaw !== '') {
+    const n = Number(buNumericRaw);
     if (Number.isFinite(n)) businessUnitId = n;
   }
+  const buName = asString(pick(row, fields, ['BusinessUnit'])).trim() || null;
 
   // TTC: prefer an explicit days column; otherwise derive from soldOn-createdOn.
   let timeToCloseDays: number | null = null;
-  const ttcRaw = pick(row, fields, ['TimeToCloseDays', 'DaysToClose', 'AgeDays']);
+  const ttcRaw = pick(row, fields, [
+    'TimeToCloseDays',
+    'DaysToClose',
+    'AgeDays',
+    'EstimateAge',
+  ]);
   if (ttcRaw != null && ttcRaw !== '') {
     const n = Number(ttcRaw);
     if (Number.isFinite(n)) timeToCloseDays = Math.max(0, Math.round(n));
@@ -216,6 +244,7 @@ function parseRow(fields: string[], row: unknown[]): ParsedRow | null {
     soldOn,
     subtotalCents,
     businessUnitId,
+    businessUnitName: buName,
     timeToCloseDays,
     tier,
   };
@@ -230,12 +259,28 @@ function normalizeTier(raw: string): 'low' | 'mid' | 'high' | null {
   return null;
 }
 
-async function loadBuToDeptMap(): Promise<Map<number, string | null>> {
+interface BuMaps {
+  byId: Map<number, string | null>;
+  /** Lookup by lowercased trimmed name. */
+  byName: Map<string, string | null>;
+}
+
+async function loadBuMaps(): Promise<BuMaps> {
   const database = db();
   const rows = await database
-    .select({ id: businessUnits.id, departmentCode: businessUnits.departmentCode })
+    .select({
+      id: businessUnits.id,
+      name: businessUnits.name,
+      departmentCode: businessUnits.departmentCode,
+    })
     .from(businessUnits);
-  return new Map(rows.map((r) => [r.id, r.departmentCode]));
+  const byId = new Map<number, string | null>();
+  const byName = new Map<string, string | null>();
+  for (const r of rows) {
+    byId.set(r.id, r.departmentCode);
+    byName.set(r.name.trim().toLowerCase(), r.departmentCode);
+  }
+  return { byId, byName };
 }
 
 export async function syncEstimateAnalysisReport(
@@ -257,26 +302,31 @@ export async function syncEstimateAnalysisReport(
       rowsUpserted: 0,
       rowsDropped: 0,
       unmappedBusinessUnitIds: [],
+      unmappedBusinessUnitNames: [],
       windowFrom: window.from,
       windowTo: window.to,
     };
   }
   const runId = start.runId;
   const unmapped = new Set<number>();
+  const unmappedNames = new Set<string>();
 
   try {
-    const buToDept = await loadBuToDeptMap();
+    const buMaps = await loadBuMaps();
 
-    // Pull every page.
+    // Pull every page. DateType=3 is "Creation Date" per the report's
+    // acceptValues definition (0=SoldOn, 1=FollowUp, 2=ParentCompletion,
+    // 3=CreationDate). Using creation date so the window aligns with
+    // the dashboard's createdOn-based aggregations.
     const allRows: unknown[][] = [];
     let fields: string[] = [];
     let page = 1;
     while (true) {
       const result = await runStReport(
         [
+          { name: 'DateType', value: 3 },
           { name: 'From', value: window.from },
           { name: 'To', value: window.to },
-          { name: 'DateType', value: 'CreatedOn' },
         ],
         page,
       );
@@ -303,11 +353,20 @@ export async function syncEstimateAnalysisReport(
     const dbRows: Array<typeof estimateAnalysis.$inferInsert> = [];
     for (const p of parsed) {
       let dept: string | null = null;
+      // Try numeric BU id first, then fall back to name lookup against
+      // the business_units dim table — the report only ships a name.
       if (p.businessUnitId != null) {
-        if (buToDept.has(p.businessUnitId)) {
-          dept = buToDept.get(p.businessUnitId) ?? null;
+        if (buMaps.byId.has(p.businessUnitId)) {
+          dept = buMaps.byId.get(p.businessUnitId) ?? null;
         } else {
           unmapped.add(p.businessUnitId);
+        }
+      } else if (p.businessUnitName) {
+        const key = p.businessUnitName.trim().toLowerCase();
+        if (buMaps.byName.has(key)) {
+          dept = buMaps.byName.get(key) ?? null;
+        } else {
+          unmappedNames.add(p.businessUnitName);
         }
       }
       dbRows.push({
@@ -375,6 +434,7 @@ export async function syncEstimateAnalysisReport(
       rowsUpserted: upserted,
       rowsDropped: dropped,
       unmappedBusinessUnitIds: Array.from(unmapped).slice(0, 40),
+      unmappedBusinessUnitNames: Array.from(unmappedNames).slice(0, 40),
       windowFrom: window.from,
       windowTo: window.to,
     };
