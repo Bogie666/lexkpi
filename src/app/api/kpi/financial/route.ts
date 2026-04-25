@@ -318,22 +318,25 @@ export async function GET(req: NextRequest) {
       ),
     );
 
-  // Collapse to one row per (job-or-estimate, dept): average subtotal,
-  // earliest createdOn for age bucketing.
-  const perJob = new Map<string, { dept: string | null; created: string; sum: number; count: number }>();
+  // Collapse to one row per (job-or-estimate, dept). For each opportunity
+  // we keep the MIN subtotal across its options — the "good" tier price.
+  // A customer who buys at all is most likely to choose the cheapest of
+  // what was offered, so this is a conservative floor on potential
+  // revenue. Averaging across options inflates the number toward the
+  // mid/best tier prices, which over-promises.
+  const perJob = new Map<string, { dept: string | null; created: string; minCents: number }>();
   for (const r of unsoldRaw) {
     const key = `${r.jobId ?? `est:${r.estimateId}`}|${r.departmentCode ?? ''}`;
+    const sub = Number(r.subtotalCents);
     const existing = perJob.get(key);
     if (existing) {
-      existing.sum += Number(r.subtotalCents);
-      existing.count += 1;
+      if (sub < existing.minCents) existing.minCents = sub;
       if (r.createdOn < existing.created) existing.created = r.createdOn;
     } else {
       perJob.set(key, {
         dept: r.departmentCode,
         created: r.createdOn,
-        sum: Number(r.subtotalCents),
-        count: 1,
+        minCents: sub,
       });
     }
   }
@@ -342,13 +345,13 @@ export async function GET(req: NextRequest) {
   let unsoldHotTotal = 0, unsoldWarmTotal = 0, unsoldJobCount = 0;
   const sevenAgoStr = sevenAgoDate.toISOString().slice(0, 10);
   for (const v of perJob.values()) {
-    const avg = Math.round(v.sum / v.count);
+    const value = v.minCents;
     const isHot = v.created > sevenAgoStr;
     unsoldJobCount += 1;
-    if (isHot) unsoldHotTotal += avg; else unsoldWarmTotal += avg;
+    if (isHot) unsoldHotTotal += value; else unsoldWarmTotal += value;
     if (v.dept) {
       const prior = unsoldByDept.get(v.dept) ?? { hot: 0, warm: 0 };
-      if (isHot) prior.hot += avg; else prior.warm += avg;
+      if (isHot) prior.hot += value; else prior.warm += value;
       unsoldByDept.set(v.dept, prior);
     }
   }
