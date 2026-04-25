@@ -74,6 +74,15 @@ async function runSchema(): Promise<{
     CREATE INDEX IF NOT EXISTS ea_job_idx ON estimate_analysis (job_id)
   `;
 
+  // opportunity_status_raw — preserves ST's raw OpportunityStatus string
+  // ("Open", "Not Attempted", "Sold", "Dismissed", etc.) so the financial
+  // page can filter potential revenue to actively-being-followed-up
+  // estimates only and exclude "Not Attempted" dead leads.
+  await sql`
+    ALTER TABLE estimate_analysis
+    ADD COLUMN IF NOT EXISTS opportunity_status_raw text
+  `;
+
   // avg_call_time_sec added to call_center_daily — the Call Center page
   // now shows "Avg Call Time" in place of "Avg Wait".
   await sql`
