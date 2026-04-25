@@ -133,34 +133,47 @@ export async function GET(req: NextRequest) {
   // Bucket raw ST type names into the dashboard's 5 categories. Keeps the UI
   // usable when ST has ~14 granular types (Lex/Lyons/ETX × 1/2-3/4-5/6+).
   // Pricing from lexairconditioning.com/cool-club. Complimentary is free.
+  // Lyons/ETX brand variants of the same system count fold into the same
+  // bucket as the Lex variant — we don't surface a brand split here.
   const BUCKETS = [
     { key: '1 System',       color: '--d-hvac_service',     price: 14 },
     { key: '2-3 Systems',    color: '--d-hvac_sales',       price: 24 },
     { key: '4-5 Systems',    color: '--d-plumbing',         price: 44 },
     { key: '6+ Systems',     color: '--d-commercial',       price: 64 },
     { key: 'Complimentary',  color: '--d-hvac_maintenance', price: 0  },
-    { key: 'Other',          color: '--d-electrical',       price: 0  },
   ] as const;
   type BucketKey = (typeof BUCKETS)[number]['key'];
 
-  function bucketOf(rawName: string): BucketKey {
+  /**
+   * Find the system-count phrase anywhere in the tier name — works for
+   * Lex / Lyons / ETX prefixes ("ETX 2-3 Systems", "Lyons 1 System").
+   * Falls back to '1 System' for anything else with "system" in the name
+   * (most "Cool Club" / "Total Comfort" tiers without an explicit count).
+   */
+  function bucketOf(rawName: string): BucketKey | null {
     const n = rawName.toLowerCase();
     if (n.includes('complimentary') || n.includes('free')) return 'Complimentary';
-    if (/\b1\s*system\b/.test(n)) return '1 System';
-    if (/\b2[-–]3\s*systems?\b/.test(n)) return '2-3 Systems';
-    if (/\b4[-–]5\s*systems?\b/.test(n)) return '4-5 Systems';
-    if (/\b6\+?\s*systems?\b/.test(n)) return '6+ Systems';
-    return 'Other';
+    if (/(^|[^0-9])2\s*[-–]\s*3\s*systems?/.test(n)) return '2-3 Systems';
+    if (/(^|[^0-9])4\s*[-–]\s*5\s*systems?/.test(n)) return '4-5 Systems';
+    if (/(^|[^0-9])6\+?\s*systems?/.test(n)) return '6+ Systems';
+    if (/(^|[^0-9])1\s*systems?/.test(n)) return '1 System';
+    if (n.includes('system') || n.includes('membership') || n.includes('cool club')) {
+      return '1 System';
+    }
+    // Anything truly unrecognized (test rows, dropped tiers) is excluded.
+    return null;
   }
 
   const perBucketCur = new Map<BucketKey, number>();
   const perBucketLy = new Map<BucketKey, number>();
   for (const snap of curSnap) {
     const k = bucketOf(snap.name);
+    if (!k) continue;
     perBucketCur.set(k, (perBucketCur.get(k) ?? 0) + snap.active);
   }
   for (const snap of lySnap) {
     const k = bucketOf(snap.name);
+    if (!k) continue;
     perBucketLy.set(k, (perBucketLy.get(k) ?? 0) + snap.active);
   }
 

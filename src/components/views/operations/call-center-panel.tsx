@@ -106,6 +106,8 @@ export function CallCenterPanel({ data, compareMode }: CallCenterPanelProps) {
                 lyHighlighted: h.lyBooked,
               }))}
               compareMode={compareMode}
+              highlightedLabel="Booked"
+              totalLabel="Calls"
             />
           </div>
           {compareOn && <TrendLegend mode={compareYear} showTarget={false} className="mt-3" />}

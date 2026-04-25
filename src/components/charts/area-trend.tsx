@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useMemo } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { linearScale, niceTicks } from '@/lib/charts/scale';
 import { fmtMoney } from '@/lib/format/money';
 
@@ -8,6 +8,8 @@ export interface AreaTrendPoint {
   label: string;
   value: number;
   target?: number;
+  /** Optional secondary label shown in the hover tooltip (e.g. "Apr 24"). */
+  hoverLabel?: string;
 }
 
 export interface AreaTrendProps {
@@ -20,6 +22,8 @@ export interface AreaTrendProps {
   /** Fixed viewBox width; chart scales via CSS to its container. */
   width?: number;
   className?: string;
+  /** Label for the value series in the tooltip. Default: 'Revenue' for cents, 'Value' otherwise. */
+  valueLabel?: string;
 }
 
 // Right padding is generous on purpose — when the SVG is downscaled onto a
@@ -36,8 +40,10 @@ export function AreaTrend({
   unit = 'cents',
   width = 800,
   className,
+  valueLabel,
 }: AreaTrendProps) {
   const gradId = useId();
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const { pathD, areaD, targetD, ticks, xPos, yFor } = useMemo(() => {
     const values = data.map((d) => d.value);
@@ -68,15 +74,23 @@ export function AreaTrend({
   }, [data, height, width, showTarget]);
 
   const fmtY = (v: number) => (unit === 'cents' ? fmtMoney(v, { abbreviate: true }) : v.toLocaleString('en-US'));
+  const fmtValue = (v: number) => (unit === 'cents' ? fmtMoney(v) : v.toLocaleString('en-US'));
+  const seriesLabel = valueLabel ?? (unit === 'cents' ? 'Revenue' : 'Value');
 
   const labelStride = Math.max(1, Math.ceil(data.length / 8));
+  const slotW = data.length > 1 ? (width - PAD.left - PAD.right) / (data.length - 1) : 0;
+  const hover = hoverIdx != null ? data[hoverIdx] : null;
+  const hoverX = hoverIdx != null ? xPos(hoverIdx) : null;
+  const hoverY = hover ? yFor(hover.value) : null;
 
   return (
+    <div className={`relative ${className ?? 'w-full h-full'}`}>
     <svg
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="xMidYMid meet"
-      className={className ?? 'w-full h-full'}
+      className="w-full h-full"
       role="img"
+      onMouseLeave={() => setHoverIdx(null)}
     >
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
@@ -125,25 +139,94 @@ export function AreaTrend({
       {areaD && <path d={areaD} fill={`url(#${gradId})`} />}
       <path d={pathD} fill="none" stroke={accent} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
 
-      {/* X labels */}
+      {/* X labels — when most labels are blank (long-window month markers
+          spelt only on day-1s), render every non-blank one. Otherwise use
+          a stride to avoid crowding short windows. */}
       <g>
-        {data.map((d, i) =>
-          i % labelStride === 0 || i === data.length - 1 ? (
-            <text
-              key={i}
-              x={xPos(i)}
-              y={height - 8}
-              textAnchor="middle"
-              fontSize={11}
-              fontFamily="var(--font-mono)"
-              style={{ letterSpacing: '0.08em' }}
-              fill="var(--muted)"
-            >
-              {d.label}
-            </text>
-          ) : null,
-        )}
+        {(() => {
+          const nonBlankCount = data.reduce((c, d) => c + (d.label ? 1 : 0), 0);
+          const usePerLabel = nonBlankCount > 0 && nonBlankCount <= 16;
+          return data.map((d, i) => {
+            const show = usePerLabel
+              ? Boolean(d.label)
+              : i % labelStride === 0 || i === data.length - 1;
+            if (!show || !d.label) return null;
+            return (
+              <text
+                key={i}
+                x={xPos(i)}
+                y={height - 8}
+                textAnchor="middle"
+                fontSize={11}
+                fontFamily="var(--font-mono)"
+                style={{ letterSpacing: '0.08em' }}
+                fill="var(--muted)"
+              >
+                {d.label}
+              </text>
+            );
+          });
+        })()}
       </g>
+
+      {/* Hover crosshair + dot */}
+      {hover && hoverX !== null && hoverY !== null && (
+        <g pointerEvents="none">
+          <line
+            x1={hoverX}
+            x2={hoverX}
+            y1={PAD.top}
+            y2={height - PAD.bottom}
+            stroke="var(--muted)"
+            strokeOpacity={0.35}
+            strokeDasharray="2 3"
+          />
+          <circle cx={hoverX} cy={hoverY} r={4} fill={accent} />
+          <circle cx={hoverX} cy={hoverY} r={6} fill={accent} fillOpacity={0.25} />
+        </g>
+      )}
+
+      {/* Hit-targets — slot width centered on each point */}
+      {slotW > 0 &&
+        data.map((_, i) => (
+          <rect
+            key={`hit-${i}`}
+            x={xPos(i) - slotW / 2}
+            y={PAD.top}
+            width={slotW}
+            height={height - PAD.top - PAD.bottom}
+            fill="transparent"
+            onMouseEnter={() => setHoverIdx(i)}
+          />
+        ))}
     </svg>
+
+    {hover && hoverX !== null && hoverY !== null && (
+      <div
+        className="pointer-events-none absolute -translate-x-1/2 -translate-y-full rounded-md border border-border bg-surface text-[12px] px-2.5 py-1.5 shadow-lg z-10 whitespace-nowrap"
+        style={{
+          left: `${(hoverX / width) * 100}%`,
+          top: `${(hoverY / height) * 100}%`,
+          marginTop: '-10px',
+        }}
+      >
+        <div className="font-mono tabular-nums text-[11px] text-muted mb-0.5">
+          {hover.hoverLabel ?? hover.label}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-sm" style={{ background: accent }} aria-hidden />
+          <span className="text-muted">{seriesLabel}</span>
+          <span className="font-mono tabular-nums">{fmtValue(hover.value)}</span>
+        </div>
+        {hover.target !== undefined && (
+          <div className="flex items-center gap-2 text-muted">
+            <span className="h-px w-2 bg-muted" aria-hidden />
+            <span>Target</span>
+            <span className="font-mono tabular-nums">{fmtValue(hover.target)}</span>
+          </div>
+        )}
+      </div>
+    )}
+    </div>
   );
 }

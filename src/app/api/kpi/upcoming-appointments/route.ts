@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/db/client';
 import { businessUnits } from '@/db/schema';
 import { collectResource } from '@/lib/sync/servicetitan/raw-client';
+import { localTodayISO, shiftISO } from '@/lib/time';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -59,22 +60,42 @@ export interface UpcomingAppointmentsResponse {
   }>;
 }
 
-function shiftDate(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+const shiftDate = shiftISO;
+
+/**
+ * ST's appointment endpoint accepts UTC instants. We want appointments
+ * starting on or after the start of *today in business-local time*, which
+ * — depending on UTC offset — is the day before in UTC. Build the bounds
+ * by formatting the same wall-clock time in America/Chicago and converting.
+ */
+function localDayStartUTC(localDay: string, addDays = 0): string {
+  // Construct midnight CT (UTC-5/UTC-6) for `localDay`. Easiest path: build
+  // the local midnight in en-CA and use Intl to figure the UTC offset.
+  const [y, m, d] = localDay.split('-').map(Number);
+  // Start with naive UTC midnight; nudge by the TZ offset for that date.
+  const naive = new Date(Date.UTC(y, m - 1, d + addDays, 0, 0, 0));
+  // What does Intl say the local time is for this UTC instant?
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    hour: '2-digit',
+    hour12: false,
+  });
+  const localHour = Number(fmt.format(naive));
+  // localHour will be 18 or 19 depending on DST; we want 0. Push forward.
+  const offsetHours = (24 - localHour) % 24;
+  return new Date(naive.getTime() + offsetHours * 3_600_000).toISOString();
 }
 
 export async function GET() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localTodayISO();
   const windowEnd = shiftDate(today, 7);
 
-  // 1. Pull appointments scheduled to start in the next 7 days.
+  // 1. Pull appointments scheduled to start in the next 7 days (CT-local).
   const appts = await collectResource<StAppointment>({
     path: '/jpm/v2/tenant/{tenant}/appointments',
     query: {
-      startsOnOrAfter: `${today}T00:00:00Z`,
-      startsBefore: `${windowEnd}T00:00:00Z`,
+      startsOnOrAfter: localDayStartUTC(today, 0),
+      startsBefore: localDayStartUTC(today, 7),
     },
   });
 
@@ -182,7 +203,14 @@ export async function GET() {
     entry.byType.set(typeName, (entry.byType.get(typeName) ?? 0) + 1);
     byDept.set(deptKey, entry);
 
-    const day = a.start.slice(0, 10);
+    // Bucket by local-CT date, not UTC. An 11pm-CT appointment is 04:00Z
+    // the next day — slicing the UTC string puts it on the wrong bucket.
+    const day = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Chicago',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(a.start));
     const daily = perDay.get(day) ?? {
       total: 0,
       depts: new Map(),
