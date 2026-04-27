@@ -87,42 +87,67 @@ export async function POST(req: NextRequest) {
   }
 
   const key = blobKey(employeeName, file);
-  const { url } = await put(key, file, {
-    access: 'public',
-    contentType: file.type,
-    addRandomSuffix: false,
-  });
+  let url: string;
+  try {
+    const result = await put(key, file, {
+      access: 'public',
+      contentType: file.type,
+      addRandomSuffix: false,
+    });
+    url = result.url;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const hint = !process.env.BLOB_READ_WRITE_TOKEN
+      ? 'BLOB_READ_WRITE_TOKEN is not set — enable Vercel Blob on the project (Storage tab → Create Database → Blob) to provision it.'
+      : undefined;
+    return NextResponse.json(
+      { error: 'blob upload failed', detail: message, hint },
+      { status: 500 },
+    );
+  }
 
   const norm = normalize(employeeName);
   const database = db();
 
-  // Best-effort: if the row exists by normalized name, set photo_url and
-  // also delete the previous blob so we don't leak orphaned files.
-  const existing = await database
-    .select({ id: employees.id, photoUrl: employees.photoUrl })
-    .from(employees)
-    .where(eq(employees.normalizedName, norm))
-    .limit(1);
+  try {
+    // Best-effort: if the row exists by normalized name, set photo_url and
+    // also delete the previous blob so we don't leak orphaned files.
+    const existing = await database
+      .select({ id: employees.id, photoUrl: employees.photoUrl })
+      .from(employees)
+      .where(eq(employees.normalizedName, norm))
+      .limit(1);
 
-  if (existing.length > 0) {
-    const prior = existing[0].photoUrl;
-    await database
-      .update(employees)
-      .set({ photoUrl: url, updatedAt: new Date() })
-      .where(eq(employees.id, existing[0].id));
-    if (prior && prior !== url) {
-      await del(prior).catch(() => {
-        // Don't fail the request just because cleanup of the old blob
-        // didn't go through — the new photo is already saved.
+    if (existing.length > 0) {
+      const prior = existing[0].photoUrl;
+      await database
+        .update(employees)
+        .set({ photoUrl: url, updatedAt: new Date() })
+        .where(eq(employees.id, existing[0].id));
+      if (prior && prior !== url) {
+        await del(prior).catch(() => {
+          // Don't fail the request just because cleanup of the old blob
+          // didn't go through — the new photo is already saved.
+        });
+      }
+    } else {
+      await database.insert(employees).values({
+        name: employeeName,
+        normalizedName: norm,
+        roleCode,
+        photoUrl: url,
       });
     }
-  } else {
-    await database.insert(employees).values({
-      name: employeeName,
-      normalizedName: norm,
-      roleCode,
-      photoUrl: url,
-    });
+  } catch (err) {
+    return NextResponse.json(
+      {
+        error: 'db update failed',
+        detail: err instanceof Error ? err.message : String(err),
+        url,
+        hint: 'photo was uploaded to blob but the employees row could not be saved',
+      },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({ ok: true, url, employeeName, normalizedName: norm });

@@ -192,8 +192,13 @@ function PhotoRow({
         headers: authHeaders(),
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`upload failed: ${res.status} ${text.slice(0, 120)}`);
+        const json = await res.json().catch(() => ({}) as Record<string, unknown>);
+        const detail =
+          (json.detail as string | undefined) ?? (json.error as string | undefined) ?? '';
+        const hint = (json.hint as string | undefined) ?? '';
+        throw new Error(
+          `${res.status}${detail ? ` — ${detail}` : ''}${hint ? ` (${hint})` : ''}`,
+        );
       }
       const json = (await res.json()) as { url: string };
       onUpdate(entry.normalizedName, json.url);
