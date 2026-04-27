@@ -126,14 +126,25 @@ export async function GET(req: NextRequest) {
   const employeeIds = sorted.map((t) => t.employeeId);
   const lyByEmp = new Map(ly.map((r) => [r.employeeId, r]));
 
-  // Photos from employees dimension, if ever populated.
-  const photos = new Map<number, string | null>();
+  // Photos from employees dimension, keyed by normalized name (the
+  // employees row id is an internal serial — it doesn't match the ST
+  // TechnicianId we use as employeeId in technician_period). The admin
+  // upload UI writes photo_url against normalized_name, so we lookup
+  // here the same way.
+  const photosByNorm = new Map<string, string | null>();
   if (employeeIds.length) {
     const empRows = await database
-      .select({ id: employees.id, photoUrl: employees.photoUrl })
+      .select({ normalizedName: employees.normalizedName, photoUrl: employees.photoUrl })
       .from(employees);
-    for (const e of empRows) photos.set(e.id, e.photoUrl);
+    for (const e of empRows) photosByNorm.set(e.normalizedName, e.photoUrl);
   }
+  void employeeIds;
+  const normName = (n: string): string =>
+    n
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
 
   const technicians: Technician[] = sorted.map((t, i) => {
     const lyRow = lyByEmp.get(t.employeeId);
@@ -151,7 +162,7 @@ export async function GET(req: NextRequest) {
       employeeId: t.employeeId,
       name: t.employeeName,
       departmentCode: t.departmentCode ?? 'hvac',
-      photoUrl: photos.get(t.employeeId) ?? null,
+      photoUrl: photosByNorm.get(normName(t.employeeName)) ?? null,
       revenue: t.revenue,
       ly: lyRow?.revenue,
       closeRate: t.avgCloseBps,

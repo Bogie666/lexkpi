@@ -66,7 +66,7 @@ export function PodiumCard({ rank, tech, role }: PodiumCardProps) {
       </div>
       <div
         className={cn(
-          'rounded-full grid place-items-center font-mono tabular-nums font-semibold',
+          'rounded-full grid place-items-center font-mono tabular-nums font-semibold overflow-hidden',
           isFirst ? 'h-[76px] w-[76px] text-[22px]' : 'h-16 w-16 text-[18px]',
         )}
         style={{
@@ -76,7 +76,17 @@ export function PodiumCard({ rank, tech, role }: PodiumCardProps) {
         }}
         aria-label={tech.name}
       >
-        {initials(tech.name)}
+        {tech.photoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={tech.photoUrl}
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          initials(tech.name)
+        )}
       </div>
       <div className="flex flex-col items-center gap-0.5">
         <div className="text-[14px] font-medium">{tech.name}</div>

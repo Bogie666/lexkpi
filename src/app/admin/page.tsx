@@ -18,6 +18,13 @@ const SECTIONS: AdminSection[] = [
     status: 'ready',
   },
   {
+    href: '/admin/photos',
+    title: 'Technician photos',
+    description:
+      'Upload a photo per technician. Replaces the initials circle on every leaderboard, podium, and ranking. Stored in Vercel Blob.',
+    status: 'ready',
+  },
+  {
     href: '/admin/sync',
     title: 'Sync status',
     description:
