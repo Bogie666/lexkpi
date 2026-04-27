@@ -52,7 +52,7 @@ function TechCell({ tech }: { tech: Technician }) {
     <td className="py-3 pr-4">
       <div className="flex items-center gap-3 min-w-0">
         <span
-          className="shrink-0 h-8 w-8 rounded-full grid place-items-center text-[11px] font-mono font-medium"
+          className="shrink-0 h-8 w-8 rounded-full grid place-items-center text-[11px] font-mono font-medium overflow-hidden"
           style={{
             background: `color-mix(in oklch, ${deptColor} 22%, var(--surface-2))`,
             border: `1px solid var(--border)`,
@@ -60,7 +60,17 @@ function TechCell({ tech }: { tech: Technician }) {
           }}
           aria-hidden
         >
-          {initials(tech.name)}
+          {tech.photoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={tech.photoUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            initials(tech.name)
+          )}
         </span>
         <div className="flex flex-col min-w-0">
           <span className="text-[13px] font-medium truncate">{tech.name}</span>
