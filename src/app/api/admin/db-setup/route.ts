@@ -83,6 +83,19 @@ async function runSchema(): Promise<{
     ADD COLUMN IF NOT EXISTS opportunity_status_raw text
   `;
 
+  // service_titan_id — ServiceTitan technician id for the employees dim
+  // table. Populated by the st_technicians sync; used to filter the
+  // /admin/photos roster by ST's `active` flag.
+  await sql`
+    ALTER TABLE employees
+    ADD COLUMN IF NOT EXISTS service_titan_id integer
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS employees_st_id_uniq
+      ON employees (service_titan_id)
+      WHERE service_titan_id IS NOT NULL
+  `;
+
   // avg_call_time_sec added to call_center_daily — the Call Center page
   // now shows "Avg Call Time" in place of "Avg Wait".
   await sql`

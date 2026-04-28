@@ -35,6 +35,10 @@ export const employees = pgTable(
   'employees',
   {
     id: serial('id').primaryKey(),
+    /** ServiceTitan technician id — populated by st_technicians sync.
+     *  Lets us filter the photo roster by ST's `active` flag without
+     *  guessing from recent-activity heuristics. */
+    serviceTitanId: integer('service_titan_id').unique(),
     name: text('name').notNull(),
     normalizedName: text('normalized_name').notNull(),
     roleCode: text('role_code'),
