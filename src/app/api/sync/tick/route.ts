@@ -20,6 +20,7 @@ import {
   syncEstimateAnalysisReport,
   ESTIMATE_ANALYSIS_REPORT_SOURCE,
 } from '@/lib/sync/servicetitan/estimate-analysis-report';
+import { syncStTechnicians, ST_TECHNICIANS_SOURCE } from '@/lib/sync/servicetitan/employees';
 import { trailingDays } from '@/lib/sync/window';
 
 function mtdWindow(): { from: string; to: string } {
@@ -136,6 +137,11 @@ const SOURCES: SourceConfig[] = [
     source: ESTIMATE_ANALYSIS_REPORT_SOURCE,
     minIntervalMin: 60 * 23, // 1x per day — Analyze view (won/dismissed/unsold)
     run: () => syncEstimateAnalysisReport(ttmWindow(), 'cron'),
+  },
+  {
+    source: ST_TECHNICIANS_SOURCE,
+    minIntervalMin: 60 * 23, // 1x per day — roster turnover is slow
+    run: () => syncStTechnicians('cron'),
   },
 ];
 
