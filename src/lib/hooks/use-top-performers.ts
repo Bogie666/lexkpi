@@ -1,17 +1,21 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import type { ApiEnvelope, Technician } from '@/lib/types/kpi';
+import type { ApiEnvelope, Role, Technician } from '@/lib/types/kpi';
 import type { DashboardParams } from '@/lib/state/url-params';
 
+export interface RolePodium {
+  role: Role;
+  top: Technician[];
+}
+
 export interface TopPerformersResponse {
-  performers: Technician[];
+  byRole: RolePodium[];
   meta: { period: string; asOf: string; from: string; to: string };
 }
 
-export function useTopPerformers(params: DashboardParams, limit = 10) {
+export function useTopPerformers(params: DashboardParams) {
   const q = {
-    limit,
     preset: params.period,
     from: params.from ?? undefined,
     to: params.to ?? undefined,

@@ -8,29 +8,19 @@ import { Panel } from '@/components/primitives/panel';
 import { Skeleton } from '@/components/primitives/skeleton';
 import { SubTabBar } from '@/components/layout/sub-tab-bar';
 import { Podium } from '@/components/views/technicians/podium';
-import { TechLeaderboard } from '@/components/views/technicians/tech-leaderboard';
 import { fmtAsOf } from '@/lib/format/date';
-import type { Role } from '@/lib/types/kpi';
 
 const SUB_OPTIONS = [
   { id: 'top_performers', label: 'Top Performers' },
   { id: 'reviews', label: 'Reviews' },
 ];
 
-// Ranking across roles is by revenue; label it generically.
-const ALL_ROLES_ROLE: Role = {
-  code: 'all',
-  name: 'All roles',
-  primaryMetric: 'Closed revenue',
-  sortKey: 'revenue',
-};
-
 export function EngagementView() {
   const [params, setParams] = useDashboardParams();
   const active = params.subtab === 'reviews' ? 'reviews' : 'top_performers';
   const showTop = active === 'top_performers';
 
-  const topQuery = useTopPerformers(params, 10);
+  const topQuery = useTopPerformers(params);
 
   return (
     <div className="flex flex-col gap-6">
@@ -77,21 +67,35 @@ export function EngagementView() {
             </Panel>
           )}
 
-          {topQuery.data && topQuery.data.performers.length >= 3 && (
-            <Podium
-              first={topQuery.data.performers[0]}
-              second={topQuery.data.performers[1]}
-              third={topQuery.data.performers[2]}
-              role={ALL_ROLES_ROLE}
-            />
-          )}
-
-          {topQuery.data && topQuery.data.performers.length > 0 && (
-            <TechLeaderboard
-              technicians={topQuery.data.performers}
-              compareMode="none"
-              roleCode="hvac_tech"
-            />
+          {topQuery.data && (
+            <div className="flex flex-col gap-8">
+              {topQuery.data.byRole.map((r) =>
+                r.top.length === 0 ? null : (
+                  <section key={r.role.code} className="flex flex-col gap-4">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h2 className="text-panel">{r.role.name}</h2>
+                      <span className="text-[12px] uppercase tracking-[0.08em] text-muted">
+                        Top {r.top.length} · {r.role.primaryMetric}
+                      </span>
+                    </div>
+                    <Podium
+                      first={r.top[0]}
+                      second={r.top[1]}
+                      third={r.top[2]}
+                      role={r.role}
+                    />
+                  </section>
+                ),
+              )}
+              {topQuery.data.byRole.every((r) => r.top.length === 0) && (
+                <Panel>
+                  <div className="text-[13px] text-muted">
+                    No technician data yet for this period — once the next sync runs the
+                    podiums will populate.
+                  </div>
+                </Panel>
+              )}
+            </div>
           )}
         </>
       ) : (
