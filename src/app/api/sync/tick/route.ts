@@ -47,6 +47,19 @@ function ttmWindow(): { from: string; to: string } {
   return { from: fromDate.toISOString().slice(0, 10), to: toISO };
 }
 
+/** Previous full calendar month — used by the Engagement Top Performers
+ *  podium and the TV rotation. Cron-synced so the data is always present
+ *  with the exact (start-of-prev-month, end-of-prev-month) window. */
+function lastMonthWindow(): { from: string; to: string } {
+  const today = new Date();
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth();
+  const start = new Date(Date.UTC(y, m - 1, 1));
+  // End-of-prev-month = day-0 of current month.
+  const end = new Date(Date.UTC(y, m, 0));
+  return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+}
+
 /** LY shifted window — matches the dashboard's resolvePeriod logic. */
 function shiftYears(win: { from: string; to: string }, years: number): { from: string; to: string } {
   const shift = (iso: string) => {
@@ -69,10 +82,12 @@ async function syncTechReportsAllPeriods(): Promise<unknown> {
   const mtd = mtdWindow();
   const ytd = ytdWindow(currentYear, todayISO);
   const ttm = ttmWindow();
+  const lastMonth = lastMonthWindow();
   const windows: Array<{ label: string; window: { from: string; to: string } }> = [
     { label: 'MTD', window: mtd },
     { label: 'YTD', window: ytd },
     { label: 'TTM', window: ttm },
+    { label: 'LAST_MONTH', window: lastMonth },
     { label: 'LY-MTD', window: shiftYears(mtd, 1) },
     { label: 'LY2-MTD', window: shiftYears(mtd, 2) },
     { label: 'LY-YTD', window: shiftYears(ytd, 1) },
