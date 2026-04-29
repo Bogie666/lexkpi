@@ -44,10 +44,12 @@ function initials(name: string): string {
  * Engagement → Top Performers tab.
  */
 export function LeaderboardScene({ roleCode }: { roleCode: string }) {
+  // Locked to last_month — same as the Engagement → Top Performers tab.
+  // Current MTD ranking is too volatile for a TV display.
   const { data } = useQuery<TopPerformersResponse>({
-    queryKey: ['tv-top-performers', 'mtd'],
+    queryKey: ['tv-top-performers', 'last_month'],
     queryFn: async () => {
-      const res = await fetch('/api/kpi/top-performers?preset=mtd');
+      const res = await fetch('/api/kpi/top-performers?preset=last_month');
       if (!res.ok) throw new Error(`top-performers: ${res.status}`);
       const json = (await res.json()) as ApiEnvelope<TopPerformersResponse>;
       return json.data;
@@ -67,7 +69,7 @@ export function LeaderboardScene({ roleCode }: { roleCode: string }) {
   if (top.length === 0) {
     return (
       <div className="flex flex-col h-full gap-6">
-        <TvHeader eyebrow={`${label} · MTD`} title="Top performers" />
+        <TvHeader eyebrow={`${label} · Last month`} title="Top performers" />
         <div className="flex-1 grid place-items-center text-muted text-[20px]">
           No data yet for this period.
         </div>
@@ -82,7 +84,7 @@ export function LeaderboardScene({ roleCode }: { roleCode: string }) {
 
   return (
     <div className="flex flex-col h-full gap-6">
-      <TvHeader eyebrow={`${label} · MTD`} title="Top performers" />
+      <TvHeader eyebrow={`${label} · Last month`} title="Top performers" />
 
       <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
         {second ? (

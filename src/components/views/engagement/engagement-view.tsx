@@ -3,7 +3,6 @@
 import { useDashboardParams } from '@/lib/state/url-params';
 import { useTopPerformers } from '@/lib/hooks/use-top-performers';
 import { SectionHead } from '@/components/primitives/section-head';
-import { PeriodTabs } from '@/components/primitives/period-tabs';
 import { Panel } from '@/components/primitives/panel';
 import { Skeleton } from '@/components/primitives/skeleton';
 import { SubTabBar } from '@/components/layout/sub-tab-bar';
@@ -20,7 +19,12 @@ export function EngagementView() {
   const active = params.subtab === 'reviews' ? 'reviews' : 'top_performers';
   const showTop = active === 'top_performers';
 
-  const topQuery = useTopPerformers(params);
+  // Top Performers is intentionally locked to the previous calendar month —
+  // current-MTD ranking moves around too much (a single big day flips the
+  // podium), and the company wants a stable winner for each role to display
+  // on TVs throughout the following month.
+  const topQueryParams = { ...params, period: 'last_month' as const };
+  const topQuery = useTopPerformers(topQueryParams);
 
   return (
     <div className="flex flex-col gap-6">
@@ -28,14 +32,11 @@ export function EngagementView() {
         eyebrow="Engagement"
         title={showTop ? 'Top Performers' : 'Reviews'}
         right={
-          <>
-            <PeriodTabs value={params.period} onChange={(p) => setParams({ period: p })} />
-            {showTop && topQuery.data && (
-              <span className="text-meta font-mono text-muted hidden md:inline">
-                as of {fmtAsOf(topQuery.data.meta.asOf)}
-              </span>
-            )}
-          </>
+          showTop && topQuery.data ? (
+            <span className="text-meta font-mono text-muted hidden md:inline">
+              Previous month · as of {fmtAsOf(topQuery.data.meta.asOf)}
+            </span>
+          ) : null
         }
       />
 
