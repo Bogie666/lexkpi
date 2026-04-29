@@ -1,7 +1,8 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import type { ApiEnvelope, TechniciansResponse, Technician } from '@/lib/types/kpi';
+import type { ApiEnvelope, Technician } from '@/lib/types/kpi';
+import type { TopPerformersResponse } from '@/lib/hooks/use-top-performers';
 import { fmtMoney } from '@/lib/format/money';
 import { fmtPercent } from '@/lib/format/percent';
 import { TvHeader } from './tv-header';
@@ -24,6 +25,9 @@ const ROLE_DEPT_COLOR: Record<string, string> = {
   commercial_hvac: '--d-commercial',
 };
 
+const MEDAL = { 1: '🥇', 2: '🥈', 3: '🥉' } as const;
+const ORDINAL = { 1: '1st', 2: '2nd', 3: '3rd' } as const;
+
 function initials(name: string): string {
   return name
     .split(' ')
@@ -33,104 +37,119 @@ function initials(name: string): string {
     .join('');
 }
 
+/**
+ * Per-role podium scene for the TV rotation. Renders 1st / 2nd / 3rd
+ * place with names, photos, revenue, close rate. Pulls from
+ * /api/kpi/top-performers, the same endpoint that powers the
+ * Engagement → Top Performers tab.
+ */
 export function LeaderboardScene({ roleCode }: { roleCode: string }) {
-  const { data } = useQuery<TechniciansResponse>({
-    queryKey: ['tv-tech', roleCode, 'mtd'],
+  const { data } = useQuery<TopPerformersResponse>({
+    queryKey: ['tv-top-performers', 'mtd'],
     queryFn: async () => {
-      const res = await fetch(`/api/kpi/technicians?role=${roleCode}&preset=mtd`);
-      if (!res.ok) throw new Error(`technicians: ${res.status}`);
-      const json = (await res.json()) as ApiEnvelope<TechniciansResponse>;
+      const res = await fetch('/api/kpi/top-performers?preset=mtd');
+      if (!res.ok) throw new Error(`top-performers: ${res.status}`);
+      const json = (await res.json()) as ApiEnvelope<TopPerformersResponse>;
       return json.data;
     },
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
   });
 
-  const isCA = roleCode === 'comfort_advisor';
-  const color = ROLE_DEPT_COLOR[roleCode] ?? '--d-hvac_service';
+  const label = ROLE_LABEL[roleCode] ?? roleCode;
 
   if (!data) {
-    return <TvHeader eyebrow={ROLE_LABEL[roleCode] ?? roleCode} title="Loading…" />;
+    return <TvHeader eyebrow={label} title="Loading…" />;
   }
 
-  const top = data.technicians.slice(0, 8);
+  const podium = data.byRole.find((r) => r.role.code === roleCode);
+  const top = podium?.top ?? [];
+  if (top.length === 0) {
+    return (
+      <div className="flex flex-col h-full gap-6">
+        <TvHeader eyebrow={`${label} · MTD`} title="Top performers" />
+        <div className="flex-1 grid place-items-center text-muted text-[20px]">
+          No data yet for this period.
+        </div>
+      </div>
+    );
+  }
+
+  // Render as 2 / 1 / 3 layout — hero in the middle, runners on the sides.
+  const first = top[0];
+  const second = top[1];
+  const third = top[2];
 
   return (
     <div className="flex flex-col h-full gap-6">
-      <TvHeader
-        eyebrow={ROLE_LABEL[roleCode] ?? roleCode}
-        title={isCA ? 'Top sales performers' : 'Top technicians'}
-        right={`MTD · ${data.team.revenue.value > 0 ? fmtMoney(data.team.revenue.value) : '—'} team`}
-      />
+      <TvHeader eyebrow={`${label} · MTD`} title="Top performers" />
 
-      <div className="flex-1 overflow-hidden">
-        <div className="grid gap-3" style={{ gridTemplateColumns: '1fr' }}>
-          {top.map((t, i) => (
-            <Row key={t.employeeId} tech={t} rank={i + 1} isCA={isCA} colorVar={color} />
-          ))}
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
+        {second ? (
+          <Card rank={2} tech={second} roleCode={roleCode} />
+        ) : (
+          <div className="hidden md:block" />
+        )}
+        <div className="md:-translate-y-4">
+          <Card rank={1} tech={first} roleCode={roleCode} hero />
         </div>
+        {third ? (
+          <Card rank={3} tech={third} roleCode={roleCode} />
+        ) : (
+          <div className="hidden md:block" />
+        )}
       </div>
     </div>
   );
 }
 
-function Row({
-  tech,
+function Card({
   rank,
-  isCA,
-  colorVar,
+  tech,
+  roleCode,
+  hero = false,
 }: {
+  rank: 1 | 2 | 3;
   tech: Technician;
-  rank: number;
-  isCA: boolean;
-  colorVar: string;
+  roleCode: string;
+  hero?: boolean;
 }) {
-  const accent = `var(${colorVar})`;
+  const accent = `var(${ROLE_DEPT_COLOR[roleCode] ?? '--d-hvac_service'})`;
+  const isCA = roleCode === 'comfort_advisor';
+
   return (
     <div
-      className="flex items-center gap-5 px-5 py-4 rounded-panel border border-border bg-surface"
+      className="flex flex-col items-center gap-4 px-6 py-8 rounded-panel border h-full"
       style={{
+        background:
+          rank === 1
+            ? 'linear-gradient(180deg, color-mix(in oklch, var(--accent) 14%, var(--surface-2)) 0%, var(--surface-2) 60%)'
+            : 'var(--surface)',
         borderColor:
           rank === 1
-            ? 'var(--accent)'
-            : rank === 2
-              ? 'color-mix(in oklch, var(--muted) 40%, var(--border))'
-              : 'var(--border)',
+            ? 'color-mix(in oklch, var(--accent) 60%, var(--border))'
+            : 'var(--border)',
+        boxShadow: rank === 1 ? 'var(--shadow-podium)' : undefined,
       }}
     >
-      <span
-        className="shrink-0 inline-flex items-center justify-center h-12 w-16 rounded-pill border text-[20px] font-mono tabular-nums font-semibold"
-        style={{
-          background:
-            rank === 1
-              ? 'color-mix(in oklch, var(--accent) 22%, var(--surface-2))'
-              : rank === 3
-                ? 'color-mix(in oklch, var(--warning) 16%, var(--surface-2))'
-                : 'var(--surface-2)',
-          color:
-            rank === 1
-              ? 'var(--accent)'
-              : rank === 3
-                ? 'var(--warning)'
-                : 'var(--muted)',
-          borderColor:
-            rank === 1
-              ? 'var(--accent)'
-              : rank === 3
-                ? 'color-mix(in oklch, var(--warning) 60%, var(--border))'
-                : 'var(--border)',
-        }}
-      >
-        #{rank}
-      </span>
+      <div className="flex items-center gap-3 text-eyebrow uppercase text-muted">
+        <span aria-hidden="true" className="text-[24px] leading-none">
+          {MEDAL[rank]}
+        </span>
+        <span className="tracking-[0.12em]">{ORDINAL[rank]} place</span>
+      </div>
 
-      <span
-        className="shrink-0 h-14 w-14 rounded-full grid place-items-center overflow-hidden text-[16px] font-mono font-semibold"
+      <div
+        className="rounded-full grid place-items-center font-mono tabular-nums font-semibold overflow-hidden"
         style={{
-          background: `color-mix(in oklch, ${accent} 22%, var(--surface-2))`,
-          border: `1px solid var(--border)`,
+          height: hero ? 144 : 112,
+          width: hero ? 144 : 112,
+          fontSize: hero ? 36 : 28,
+          background: `color-mix(in oklch, ${accent} 25%, var(--surface-2))`,
+          border: `1px solid ${rank === 1 ? 'var(--accent)' : 'var(--border)'}`,
           color: accent,
         }}
+        aria-label={tech.name}
       >
         {tech.photoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -138,40 +157,28 @@ function Row({
         ) : (
           initials(tech.name)
         )}
-      </span>
-
-      <div className="flex flex-col flex-1 min-w-0">
-        <span className="text-[26px] font-semibold leading-tight truncate">{tech.name}</span>
-        <span className="text-[14px] text-muted capitalize">
-          {tech.departmentCode.replace('_', ' ')}
-        </span>
       </div>
 
-      <div className="flex items-center gap-8 shrink-0">
-        <div className="flex flex-col items-end">
-          <span className="text-[12px] text-muted uppercase tracking-[0.08em]">Revenue</span>
-          <span className="text-[28px] font-mono tabular-nums font-semibold">
-            {fmtMoney(tech.revenue)}
-          </span>
+      <div className="flex flex-col items-center gap-1 text-center">
+        <div
+          className="font-semibold leading-tight"
+          style={{ fontSize: hero ? 32 : 24 }}
+        >
+          {tech.name}
         </div>
-        <div className="flex flex-col items-end">
-          <span className="text-[12px] text-muted uppercase tracking-[0.08em]">Close</span>
-          <span
-            className={`text-[24px] font-mono tabular-nums ${
-              tech.closeRate >= 4500 ? 'text-up' : tech.closeRate < 2500 ? 'text-warning' : ''
-            }`}
-          >
-            {fmtPercent(tech.closeRate, { decimals: 1 })}
-          </span>
-        </div>
-        <div className="flex flex-col items-end hidden xl:flex">
-          <span className="text-[12px] text-muted uppercase tracking-[0.08em]">
-            {isCA ? 'Avg sale' : 'Avg ticket'}
-          </span>
-          <span className="text-[20px] font-mono tabular-nums text-muted">
-            {fmtMoney(isCA ? tech.avgSale : tech.avgTicket)}
-          </span>
-        </div>
+      </div>
+
+      <div
+        className="font-mono tabular-nums font-semibold"
+        style={{ fontSize: hero ? 56 : 40 }}
+      >
+        {fmtMoney(tech.revenue)}
+      </div>
+
+      <div className="flex items-center gap-4 text-[16px] text-muted font-mono tabular-nums">
+        <span>{fmtPercent(tech.closeRate, { decimals: 1 })} close</span>
+        <span aria-hidden className="h-1 w-1 rounded-full bg-border" />
+        <span>{fmtMoney(isCA ? tech.avgSale : tech.avgTicket)} avg</span>
       </div>
     </div>
   );
