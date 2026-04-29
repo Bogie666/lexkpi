@@ -45,11 +45,11 @@ const SECTIONS: AdminSection[] = [
     status: 'pending',
   },
   {
-    href: '/admin/tvs',
-    title: 'TVs',
+    href: '/tv',
+    title: 'TV display',
     description:
-      'Token-per-TV for display rotation. Pending — blocked by TV display route.',
-    status: 'pending',
+      'Open in Chrome kiosk on any office TV. Cycles through revenue, leaderboards by role, call center, memberships, and upcoming appointments. Auto-refreshes every 5 min and reloads hourly.',
+    status: 'ready',
   },
 ];
 
