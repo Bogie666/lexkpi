@@ -128,15 +128,19 @@ export async function GET(req: NextRequest) {
       return activeNorms.has(normalize(r.employeeName));
     });
 
+    // Rank by TotalSales (cents) — same canonical field the Technicians
+    // tab uses for "Revenue". `completedRevenueCents` only counts work
+    // a tech actually performed, so a CA who SOLD a $30K install but
+    // didn't run the job shows $0 there. TotalSales captures their
+    // actual contribution.
     const sorted = [...filtered].sort((a, b) => {
-      if (sortKey === 'revenue')
-        return Number(b.completedRevenueCents) - Number(a.completedRevenueCents);
       if (sortKey === 'avgTicket')
         return Number(b.totalJobAverageCents) - Number(a.totalJobAverageCents);
       if (sortKey === 'jobs') return Number(b.completedJobs) - Number(a.completedJobs);
       if (sortKey === 'closeRate')
         return Number(b.closeRateBps ?? 0) - Number(a.closeRateBps ?? 0);
-      return 0;
+      // 'revenue' (default) → TotalSales
+      return Number(b.totalSalesCents) - Number(a.totalSalesCents);
     });
 
     const top = sorted.slice(0, 3).map((r, i): Technician => {
@@ -152,7 +156,7 @@ export async function GET(req: NextRequest) {
         name: r.employeeName,
         departmentCode: deptCodeForRole(role.code),
         photoUrl: photoByNorm.get(norm) ?? null,
-        revenue: Number(r.completedRevenueCents),
+        revenue: totalSales,
         closeRate: Number(r.closeRateBps ?? 0),
         opps,
         avgSale: isCA ? avgSaleCents : Number(r.totalJobAverageCents),
