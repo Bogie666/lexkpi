@@ -4,11 +4,15 @@ import { useQuery } from '@tanstack/react-query';
 import type { ApiEnvelope, AnalyzeResponse } from '@/lib/types/kpi';
 import type { DashboardParams } from '@/lib/state/url-params';
 
+/**
+ * Analyze view is always trailing-12-months — its seasonality chart and
+ * tier/TTC rollups need a year of history to be meaningful, regardless
+ * of whichever dashboard-wide period is currently selected. We ignore
+ * params.period and explicitly request TTM here.
+ */
 export function useEstimates(params: DashboardParams) {
   const q = {
-    preset: params.period === 'mtd' ? 'ttm' : params.period,
-    from: params.from ?? undefined,
-    to: params.to ?? undefined,
+    preset: 'ttm',
     location: params.location,
   };
 
