@@ -28,9 +28,31 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
   const compareYear: 'ly' | 'ly2' = compareMode === 'ly2' ? 'ly2' : 'ly';
 
   const pctToGoal = total.percentToGoal / 100;
+  const fullTarget = total.fullPeriodTarget;
+  // Only call out the full-period goal when it's meaningfully larger than
+  // the pace-adjusted figure — for last_month / fully-elapsed windows the
+  // two values are identical and the second pill would be noise.
+  const showFullPeriod = fullTarget > 0 && fullTarget > total.target * 1.01;
+  const fullPeriodLabel =
+    data.meta.period === 'YTD'
+      ? 'Annual goal'
+      : data.meta.period === 'QTD'
+        ? 'Quarter goal'
+        : 'Monthly goal';
   const subMeta = (
-    <span className="font-mono tabular-nums">
-      {fmtPercent(total.percentToGoal)} of {fmtMoney(total.target)} goal · {data.meta.period}
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono tabular-nums">
+      <span>
+        {fmtPercent(total.percentToGoal)} of {fmtMoney(total.target)} daily pace ·{' '}
+        {data.meta.period}
+      </span>
+      {showFullPeriod && (
+        <>
+          <span aria-hidden="true" className="h-1 w-1 rounded-full bg-border" />
+          <span className="text-muted">
+            {fullPeriodLabel}: {fmtMoney(fullTarget)}
+          </span>
+        </>
+      )}
     </span>
   );
 
@@ -108,7 +130,7 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
         />
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between text-[12px] text-muted">
-            <span className="text-eyebrow uppercase">Progress to goal</span>
+            <span className="text-eyebrow uppercase">Daily pace</span>
             <span className="font-mono tabular-nums">
               {fmtMoney(total.revenue.value)} / {fmtMoney(total.target)}
             </span>
@@ -119,6 +141,17 @@ export function FinancialHero({ data, compareMode }: FinancialHeroProps) {
               style={{ width: `${Math.min(pctToGoal, 100)}%` }}
             />
           </div>
+          {showFullPeriod && (
+            <div className="flex items-center justify-between text-[11px] text-muted/80 mt-1">
+              <span className="text-eyebrow uppercase">{fullPeriodLabel}</span>
+              <span className="font-mono tabular-nums">
+                {fmtMoney(fullTarget)}{' '}
+                <span className="text-muted/60">
+                  ({fmtPercent(fullTarget > 0 ? Math.round((total.revenue.value / fullTarget) * 10000) : 0)})
+                </span>
+              </span>
+            </div>
+          )}
         </div>
       </div>
       {chart}

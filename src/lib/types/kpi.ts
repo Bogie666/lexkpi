@@ -32,7 +32,14 @@ export interface FinancialTrendPoint {
 export interface FinancialResponse {
   total: {
     revenue: CompareValue;
+    /** Pace-adjusted goal: full target × (days elapsed / days in target) per
+     *  applicable target row, summed across the window. Compared against
+     *  revenue to compute percentToGoal. */
     target: number;
+    /** Full untouched goal: sum of every applicable target row's targetValue
+     *  with no pro-rating. The "monthly target" / "annual target" the team
+     *  ultimately needs to hit by the end of the window. */
+    fullPeriodTarget: number;
     percentToGoal: number;
   };
   departments: FinancialDepartment[];

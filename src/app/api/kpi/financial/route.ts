@@ -245,6 +245,14 @@ export async function GET(req: NextRequest) {
     return s + Number(t.targetValue) * (overlap / totalDays);
   }, 0);
 
+  // Full untouched sum — the "monthly goal" / "annual goal" we ultimately
+  // need to hit by the end of the window. Used for the secondary line on
+  // the financial hero alongside the pace-adjusted figure.
+  const fullPeriodTarget = applicableRows.reduce(
+    (s, t) => s + Number(t.targetValue),
+    0,
+  );
+
   // Per-dept jobs/opportunities summed
   const jobsByDept = new Map<string, number>();
   const oppsByDept = new Map<string, number>();
@@ -419,6 +427,7 @@ export async function GET(req: NextRequest) {
     total: {
       revenue: compareValue(totalCur, totalLy, totalLy2, 'cents'),
       target: companyTarget,
+      fullPeriodTarget,
       percentToGoal: companyTarget > 0 ? Math.round((totalCur / companyTarget) * 10000) : 0,
     },
     departments: deptList.map((d) => ({
