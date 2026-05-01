@@ -11,7 +11,7 @@ export interface PeriodTabsProps {
   className?: string;
 }
 
-const DEFAULT_OPTIONS: readonly Preset[] = ['mtd', 'qtd', 'ytd', 'l30', 'ttm'];
+const DEFAULT_OPTIONS: readonly Preset[] = ['mtd', 'qtd', 'ytd', 'last_month', 'ttm'];
 
 export function PeriodTabs({ value, onChange, options = DEFAULT_OPTIONS, className }: PeriodTabsProps) {
   return (
