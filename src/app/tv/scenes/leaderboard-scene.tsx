@@ -89,18 +89,23 @@ export function LeaderboardScene({ roleCode }: { roleCode: string }) {
     <div className="flex flex-col h-full gap-6">
       <TvHeader eyebrow={`${label} · Last month`} title="Top performers" />
 
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
-        {second ? (
-          <Card rank={2} tech={second} roleCode={roleCode} />
-        ) : (
-          <div className="hidden md:block" />
-        )}
-        <Card rank={1} tech={first} roleCode={roleCode} hero />
-        {third ? (
-          <Card rank={3} tech={third} roleCode={roleCode} />
-        ) : (
-          <div className="hidden md:block" />
-        )}
+      {/* Outer flex centers the podium vertically in the available area
+          so it doesn't slam to the floor; inner grid keeps items-end so
+          the hero (1st) still rises above 2nd/3rd as a real podium. */}
+      <div className="flex-1 flex items-center justify-center">
+        <div className="w-full max-w-[1400px] grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
+          {second ? (
+            <Card rank={2} tech={second} roleCode={roleCode} />
+          ) : (
+            <div className="hidden md:block" />
+          )}
+          <Card rank={1} tech={first} roleCode={roleCode} hero />
+          {third ? (
+            <Card rank={3} tech={third} roleCode={roleCode} />
+          ) : (
+            <div className="hidden md:block" />
+          )}
+        </div>
       </div>
     </div>
   );
