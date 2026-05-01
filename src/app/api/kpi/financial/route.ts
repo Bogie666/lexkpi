@@ -167,7 +167,7 @@ export async function GET(req: NextRequest) {
     targetByDept.set(code, (targetByDept.get(code) ?? 0) + Number(t.targetValue));
   }
 
-  // Company-wide revenue targets (usually none now; team opted for auto-sum).
+  // Company-wide revenue targets (one knob per month if anyone uses it).
   const companyTargets = await database
     .select()
     .from(targets)
@@ -179,11 +179,45 @@ export async function GET(req: NextRequest) {
         gte(targets.effectiveTo, period.cur.from),
       ),
     );
-  const companySumFromRows = companyTargets.reduce((s, t) => s + Number(t.targetValue), 0);
-  const companyTarget =
-    companySumFromRows > 0
-      ? companySumFromRows
-      : Array.from(targetByDept.values()).reduce((a, b) => a + b, 0);
+
+  // Per-month resolution: for each calendar month overlapping the
+  // window, take the company target if there's one for that month,
+  // otherwise sum the dept targets for that month. Then sum across
+  // months for the total goal.
+  //
+  // The previous "if any company target exists, use only those"
+  // logic broke YTD: with only April having a company target, Jan/
+  // Feb/Mar dept targets were ignored and the goal collapsed to just
+  // April's value. Per-month preference fixes that.
+  type TargetRow = {
+    effectiveFrom: string;
+    effectiveTo: string;
+    targetValue: unknown;
+  };
+  const monthKey = (iso: string) => iso.slice(0, 7); // YYYY-MM
+  const monthBuckets = new Map<
+    string,
+    { company: TargetRow[]; dept: TargetRow[] }
+  >();
+  for (const t of companyTargets) {
+    const k = monthKey(t.effectiveFrom);
+    if (!monthBuckets.has(k)) monthBuckets.set(k, { company: [], dept: [] });
+    monthBuckets.get(k)!.company.push(t as TargetRow);
+  }
+  for (const t of deptTargets) {
+    const k = monthKey(t.effectiveFrom);
+    if (!monthBuckets.has(k)) monthBuckets.set(k, { company: [], dept: [] });
+    monthBuckets.get(k)!.dept.push(t as TargetRow);
+  }
+  const applicableRows: TargetRow[] = [];
+  for (const v of monthBuckets.values()) {
+    if (v.company.length > 0) applicableRows.push(...v.company);
+    else applicableRows.push(...v.dept);
+  }
+  const companyTarget = applicableRows.reduce(
+    (s, t) => s + Number(t.targetValue),
+    0,
+  );
 
   // Per-dept jobs/opportunities summed
   const jobsByDept = new Map<string, number>();
@@ -222,9 +256,7 @@ export async function GET(req: NextRequest) {
   // contributes targetValue / daysInMonth to each day in that month. If the
   // display window spans multiple monthly targets, their daily contributions
   // stack naturally. If no targets are set for a day, it contributes 0.
-  type TargetRow = { effectiveFrom: string; effectiveTo: string; targetValue: unknown };
-  const applicableRows: TargetRow[] =
-    companyTargets.length > 0 ? companyTargets : deptTargets;
+  // Uses the per-month-resolved applicableRows from above.
   const rowMeta = applicableRows.map((t) => {
     const days = daysInWindow({ from: t.effectiveFrom, to: t.effectiveTo }).length || 1;
     return {
