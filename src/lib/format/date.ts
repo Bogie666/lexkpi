@@ -29,5 +29,5 @@ export const PRESET_LABELS: Record<string, string> = {
   l30: 'L30',
   l90: 'L90',
   ttm: 'TTM',
-  last_month: 'Last month',
+  last_month: 'Last Month',
 };
