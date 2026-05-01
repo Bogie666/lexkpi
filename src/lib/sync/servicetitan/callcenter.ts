@@ -283,7 +283,22 @@ export async function syncCallcenter(
     if (hourlyRows.length > 0) {
       for (let i = 0; i < hourlyRows.length; i += 500) {
         const batch = hourlyRows.slice(i, i + 500);
-        await database.insert(callCenterHourly).values(batch);
+        // Upsert (not plain INSERT) — local-bucketed dates can land
+        // outside the UTC delete window (a call at 11pm CT yesterday
+        // buckets to yesterday's local date but our DELETE only covered
+        // the UTC window), so a stale row with the same (date, hour)
+        // key may still exist.
+        await database
+          .insert(callCenterHourly)
+          .values(batch)
+          .onConflictDoUpdate({
+            target: [callCenterHourly.reportDate, callCenterHourly.hour],
+            set: {
+              totalCalls: sql.raw(`excluded.total_calls`),
+              callsBooked: sql.raw(`excluded.calls_booked`),
+              syncedAt: new Date(),
+            },
+          });
         hourlyUpserted += batch.length;
       }
     }
