@@ -70,6 +70,35 @@ function parseDuration(s: string | null | undefined): number {
   return hh * 3600 + mm * 60 + ss;
 }
 
+/**
+ * ST emits `receivedOn` as a UTC ISO timestamp. We bucket by *local*
+ * (America/Chicago) date + hour so the dashboard's hourly pacing chart
+ * reads naturally — a call taken at 8am CT shows up as "8a", not as
+ * the UTC equivalent that swings 5–6 hours forward.
+ */
+const LOCAL_TZ = 'America/Chicago';
+const dateFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: LOCAL_TZ,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+const hourFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: LOCAL_TZ,
+  hour: '2-digit',
+  hour12: false,
+});
+
+function localBucket(receivedOn: string): { date: string; hour: number } {
+  const d = new Date(receivedOn);
+  const date = dateFmt.format(d); // en-CA → YYYY-MM-DD
+  // hourFmt may emit "00" through "23" — sometimes "24" at midnight in
+  // some locales, so coerce defensively.
+  const raw = Number(hourFmt.format(d));
+  const hour = ((raw % 24) + 24) % 24;
+  return { date, hour };
+}
+
 export async function syncCallcenter(
   window: SyncWindow,
   trigger: SyncTrigger,
@@ -133,8 +162,7 @@ export async function syncCallcenter(
       if (lc.direction && lc.direction.toLowerCase() !== 'inbound') continue;
       if (!lc.receivedOn) continue;
       inboundCount++;
-      const date = lc.receivedOn.slice(0, 10);
-      const hour = Number(lc.receivedOn.slice(11, 13));
+      const { date, hour } = localBucket(lc.receivedOn);
       const agentName = lc.agent?.name?.trim() || 'Unassigned';
       const isBooked = !!c.jobNumber;
       const isAbandoned = (lc.callType || '').toLowerCase() === 'abandoned';
