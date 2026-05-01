@@ -214,10 +214,36 @@ export async function GET(req: NextRequest) {
     if (v.company.length > 0) applicableRows.push(...v.company);
     else applicableRows.push(...v.dept);
   }
-  const companyTarget = applicableRows.reduce(
-    (s, t) => s + Number(t.targetValue),
-    0,
-  );
+
+  // Pace-adjusted goal: each target row contributes pro-rata for the
+  // number of days the requested window overlaps the target's effective
+  // range. So a YTD view on May 1 sums Jan/Feb/Mar/Apr full + May × 1/31
+  // — comparing $X earned-to-date against $X expected-to-date instead
+  // of against the whole upcoming-end-of-window goal.
+  const dayMs = 86_400_000;
+  const overlapDays = (
+    aFrom: string,
+    aTo: string,
+    bFrom: string,
+    bTo: string,
+  ): number => {
+    const start = aFrom > bFrom ? aFrom : bFrom;
+    const end = aTo < bTo ? aTo : bTo;
+    if (start > end) return 0;
+    return Math.round((Date.parse(end) - Date.parse(start)) / dayMs) + 1;
+  };
+  const companyTarget = applicableRows.reduce((s, t) => {
+    const totalDays =
+      Math.round((Date.parse(t.effectiveTo) - Date.parse(t.effectiveFrom)) / dayMs) + 1;
+    if (totalDays <= 0) return s;
+    const overlap = overlapDays(
+      t.effectiveFrom,
+      t.effectiveTo,
+      period.cur.from,
+      period.cur.to,
+    );
+    return s + Number(t.targetValue) * (overlap / totalDays);
+  }, 0);
 
   // Per-dept jobs/opportunities summed
   const jobsByDept = new Map<string, number>();
