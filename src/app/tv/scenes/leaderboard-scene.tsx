@@ -77,7 +77,10 @@ export function LeaderboardScene({ roleCode }: { roleCode: string }) {
     );
   }
 
-  // Render as 2 / 1 / 3 layout — hero in the middle, runners on the sides.
+  // Real-podium layout: 2 / 1 / 3 across, all cards bottom-aligned.
+  // The hero (1st) is naturally taller (bigger avatar, bigger numbers,
+  // more padding) so it rises above the runners-up — no h-full hack
+  // needed and no reverse-podium effect from a wrapper-div mismatch.
   const first = top[0];
   const second = top[1];
   const third = top[2];
@@ -92,9 +95,7 @@ export function LeaderboardScene({ roleCode }: { roleCode: string }) {
         ) : (
           <div className="hidden md:block" />
         )}
-        <div className="md:-translate-y-4">
-          <Card rank={1} tech={first} roleCode={roleCode} hero />
-        </div>
+        <Card rank={1} tech={first} roleCode={roleCode} hero />
         {third ? (
           <Card rank={3} tech={third} roleCode={roleCode} />
         ) : (
@@ -121,7 +122,9 @@ function Card({
 
   return (
     <div
-      className="flex flex-col items-center gap-4 px-6 py-8 rounded-panel border h-full"
+      className={`flex flex-col items-center gap-4 rounded-panel border ${
+        hero ? 'px-8 pt-14 pb-10' : 'px-6 pt-8 pb-6'
+      }`}
       style={{
         background:
           rank === 1
